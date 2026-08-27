@@ -74,6 +74,17 @@ PH.location = (() => {
     return live ? `${url}/live` : url;
   }
 
+  /* A fresh, empty search — no slug, because there isn't one yet. GGG only
+     hands out a slug after you actually submit a search from their own form,
+     so this is as far as a URL alone can get you toward "start a new
+     search"; the rest (typing the item name, adding stat filters, hitting
+     Search) has to happen in the page itself. */
+  function buildBlankSearchUrl(version, league) {
+    if (!league) return null;
+    const base = version === "2" ? "trade2" : "trade";
+    return [BASE, base, "search", encodeSegment(league)].join("/");
+  }
+
   /* ----------------------------------------------------------------------
      Which league should a bookmark open in?
 
@@ -95,5 +106,5 @@ PH.location = (() => {
     return lastSeenLeagues?.[location.version] ?? null;
   }
 
-  return { current, parsePath, parseUrl, buildUrl, resolveLeague, encodeSegment };
+  return { current, parsePath, parseUrl, buildUrl, buildBlankSearchUrl, resolveLeague, encodeSegment };
 })();

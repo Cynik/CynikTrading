@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PoE Trade Helper",
   "version": "0.3.0",
-  "description": "Bookmark folders, a live-search watchlist, saved trade listings, fuzzy stat search and chaos/divine conversion for the Path of Exile trade site.",
+  "description": "Bookmark folders, saved trade listings, fuzzy stat search and chaos/divine conversion for the Path of Exile trade site.",
 
   "action": {
     "default_popup": "src/popup/popup.html",
@@ -29,7 +29,6 @@
         "src/content/exchange.js",
         "src/content/panel.js",
         "src/content/bookmarks.js",
-        "src/content/live-searches.js",
         "src/content/saved.js",
         "src/content/prices.js",
         "src/content/main.js"

@@ -1,9 +1,8 @@
 /* =========================================================================
-   ui.js — small helpers the three tabs all use.
+   ui.js — small helpers the tabs all use.
    =========================================================================
-   Nothing clever here. It exists so bookmarks.js / live-searches.js /
-   saved.js don't each grow their own copy of "make a button" and "ask a
-   question".
+   Nothing clever here. It exists so bookmarks.js and saved.js don't each
+   grow their own copy of "make a button" and "ask a question".
    ========================================================================= */
 
 window.PH = window.PH || {};
@@ -126,9 +125,15 @@ PH.ui = (() => {
 
   /* Shared by anything displaying a { amount, currency } price from
      PH.prices — the trade-price badge in Bookmarks, and the saved-listing
-     capture button. */
+     capture button. currency is only ever exactly "chaos" or "divine" for
+     those two (see readCurrency in prices.js) — anything else is that
+     currency's own real display name (e.g. "Orb of Fusing"), shown as-is
+     rather than mislabelled as chaos, which is what this used to do for
+     every non-divine currency before readCurrency could tell them apart. */
   function formatPrice({ amount, currency }) {
-    return currency === "divine" ? `${amount} div` : `${amount}c`;
+    if (currency === "divine") return `${amount} div`;
+    if (currency === "chaos") return `${amount}c`;
+    return `${amount} ${currency}`;
   }
 
   /* ----------------------------------------------------------------------
@@ -146,11 +151,14 @@ PH.ui = (() => {
 
   /* Each entry in `lines` is a plain string, {text, class} to add an extra
      class (e.g. a price-change highlight) to just that line, or a DOM node
-     (e.g. a sparkline) to insert as-is instead of wrapping it as a line. */
-  function hoverPopup(trigger, lines) {
+     (e.g. a sparkline, or a whole .ph-hover-grid of rows) to insert as-is
+     instead of wrapping it as a line. `title`, if given, renders as a small
+     uppercase label above everything else, separated by a hairline. */
+  function hoverPopup(trigger, lines, { title } = {}) {
     const show = () => {
       closeHoverPopup();
       const popup = el("div", { class: "ph-hover-popup" },
+        title ? el("div", { class: "ph-hover-popup-title", text: title }) : null,
         lines.map((line) => {
           if (line instanceof Node) return line;
           const isPlain = typeof line === "string";

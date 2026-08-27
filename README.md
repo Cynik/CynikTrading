@@ -1,5 +1,12 @@
 # PoE Trade Helper
 
+This project is based in part on Better Trading by Exile Center, which is licensed under the MIT License.
+
+Improvements to Better Trading:
+
+- Automaically adds the fuzzy search modifier (~) to all trade search fields
+-
+
 Quality-of-life additions to the official Path of Exile trade site, as an
 in-page panel.
 
@@ -9,12 +16,11 @@ in-page panel.
   whether it's trending up or down — and for PoE1 items poe.ninja has a
   fixed catalog for (uniques, gems, corpses, ...), its average price
   alongside it.
-- **Live searches** — a persisted watchlist of searches, added from the page
-  you're on or pulled in from a bookmark folder, each with a one-click "Open
-  live search".
 - **Saved listings** — snapshot a specific trade offer (item, price, seller,
-  its mods) with a button on each result row. _(Rebuilding a search from
-  that item's own stats to find others like it is still in progress.)_
+  its mods) with a button on each result row. "Search this exact item" takes
+  you straight back to real results for that item and its rolled mods
+  (PoE1 only for now), and records the price if it's changed since you
+  saved it — hover the price to see its history.
 - **Auto-`~`** — stat filter boxes start with `~` already typed, making the mod
   search fuzzy by default. Delete it for an exact search.
 - **Chaos ↔ divine** — the other currency's value, next to each listed price.
@@ -68,11 +74,17 @@ a browser.
 
 ## Design
 
-The extension is deliberately read-only with respect to GGG. It reads the page
-you already have open and stores your data locally in your browser. It does not
-call the trade API, automate any in-game action, or send your data anywhere.
-The one network request it makes is a currency exchange rate from poe.ninja,
-cached for 15 minutes.
+The extension is deliberately read-only with respect to GGG, with one narrow,
+deliberate exception: **Search this exact item** (Saved listings) calls the
+trade site's own search API directly, so it can take you to real results
+instead of a filled-in form you still have to submit yourself — the same
+approach well-established community tools like Awakened PoE Trade and
+PoE Overlay use. It's rate-limited against the trade site's own response
+headers and only ever runs when you click it. Nothing else in the extension
+automates any in-game action or sends your data anywhere; everything else
+reads the page you already have open and stores your data locally. The other
+network request it makes is a currency exchange rate from poe.ninja, cached
+for 15 minutes.
 
 Exchange rate data from [poe.ninja](https://poe.ninja). Import/export format,
 several verified CSS selectors, and the folder icon artwork come from
@@ -81,5 +93,3 @@ several verified CSS selectors, and the folder icon artwork come from
 ---
 
 This product isn't affiliated with or endorsed by Grinding Gear Games in any way.
-
-This project is based in part on Better Trading by Exile Center, which is licensed under the MIT License.

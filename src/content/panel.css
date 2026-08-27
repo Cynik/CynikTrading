@@ -54,6 +54,17 @@ body.ph-active:not(.ph-collapsed) #trade {
   margin: 0;
 }
 
+/* #trade above always fills the entire width up to the panel — margin:0,
+   not a cap, so its right edge lines up with the panel exactly, with
+   nothing left over between them. div.search-bar.search-advanced's own
+   margin is deliberately left alone: GGG's own CSS already centers it
+   (fixed max-width: 1520px, margin: 0 auto — verified 2026-08 via DevTools
+   computed styles) inside whatever width #trade has. On an ultrawide
+   monitor that leaves real space on both sides of the filters — but
+   evenly, which is what was actually asked for, not a smaller #trade with
+   a second dead zone of its own after it. A capped-#trade version of this
+   was tried and reverted; see CLAUDE.local.md for why. */
+
 /* Better Trading hits this same problem and fixes it the same way (see
    _search-panel.scss at github.com/exile-center/better-trading): narrowing
    #trade doesn't narrow the real browser viewport, so GGG's own two-column
@@ -200,6 +211,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   color: var(--ph-ink);
   font: inherit;
   font-size: 12px;
+  text-align: center;
   cursor: pointer;
   white-space: nowrap;
   /* .ph-btn is sometimes an <a> (e.g. Saved listings' "Open the search this
@@ -292,12 +304,13 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 .ph-hover-popup {
   position: fixed;
   z-index: 1003;
-  padding: 6px 8px;
+  min-width: 180px;
+  padding: 8px 10px;
   border: 1px solid var(--ph-gold-dim);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--ph-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-  font: 12px/1.6 "Segoe UI", system-ui, sans-serif;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  font: 12px/1.5 "Segoe UI", system-ui, sans-serif;
   color: var(--ph-ink);
   white-space: nowrap;
   pointer-events: none;
@@ -309,21 +322,57 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 }
 .ph-hover-popup-line + .ph-hover-popup-line { margin-top: 1px; }
 
+/* A small uppercase label above a popup's content, separated by a hairline
+   — gives a price-history popup a "card" identity instead of reading as a
+   bare stack of lines. Optional; only used where PH.ui.hoverPopup is given
+   a title. */
+.ph-hover-popup-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ph-muted);
+  padding-bottom: 5px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--ph-line);
+}
+
 /* The trend sparkline sits above the list, full width of the popup's own
    padding box. display:block since an inline default <svg> leaves a few
    stray pixels of baseline gap below it. */
-.ph-sparkline { display: block; width: 100%; height: 26px; margin-bottom: 4px; }
+.ph-sparkline { display: block; width: 100%; height: 26px; margin-bottom: 6px; }
 
-/* Unlike the trend arrow, every entry with a predecessor gets some color
-   here, on a 3-step scale: dull under 10%, solid at 10%+, bright (a more
-   saturated neon hue, not just more opaque) at 30%+. Green/down = cheaper,
-   red/up = pricier, matching the arrow's buyer's-eye-view color choice. */
-.ph-hover-popup-line-down-dull { background: rgba(111, 174, 92, 0.14); }
-.ph-hover-popup-line-down-solid { background: rgba(111, 174, 92, 0.34); }
-.ph-hover-popup-line-down-bright { background: rgba(57, 255, 20, 0.38); }
-.ph-hover-popup-line-up-dull { background: rgba(209, 102, 90, 0.14); }
-.ph-hover-popup-line-up-solid { background: rgba(209, 102, 90, 0.34); }
-.ph-hover-popup-line-up-bright { background: rgba(255, 45, 45, 0.42); }
+/* Price-history rows — shared by a trade's own price, a folder's Total Cost
+   (priceTrendUI in bookmarks.js), and Saved listings (saved.js). One real
+   CSS grid rather than a wrapper div per row, so every row's time/price/diff
+   columns line up like a small table instead of each row sizing its own
+   columns independently; the caller appends time/price/diff spans as flat
+   children (not one row-div each) specifically so this template applies
+   across all of them at once. */
+.ph-hover-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 3px;
+}
+.ph-hover-time { color: var(--ph-muted); font-size: 10.5px; }
+.ph-hover-price { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The diff from the entry before it, as a small pill rather than a wash
+   across the whole row — direction alone (not magnitude) sets the color;
+   the number itself already carries the magnitude, so a 3-step opacity
+   scale on top of it was redundant noise more than it was information. */
+.ph-hover-diff {
+  justify-self: end;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.ph-hover-diff-down { color: #8bd977; background: rgba(111, 174, 92, 0.16); }
+.ph-hover-diff-up { color: #ff6b6b; background: rgba(255, 55, 55, 0.16); }
 
 /* ---- folder icons ---- */
 
@@ -498,6 +547,27 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   text-transform: none;
 }
 
+/* Groups .ph-trade-price and .ph-trade-trend as one visual unit, so a big
+   drop's flair (below) can outline just the two of them. */
+.ph-trade-price-group { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Extra flair for a big (30%+) price drop, wrapping just the price and its
+   arrow — not the whole row, and not the arrow alone. Catches your eye
+   scrolling through a long folder, not just when you're already looking
+   right at it. */
+/* Snug on the price side (left), a bit more room on the arrow side (right)
+   — the ▼ glyph itself carries visible whitespace within its own character
+   box in most fonts, so pulling the border in tighter there just clips
+   into the glyph instead of closing the gap. Matching the visible padding
+   on both sides would need less on the right than the left, which reads
+   as lopsided; giving the arrow side real breathing room instead looks
+   deliberate rather than cramped. */
+.ph-trade-price-group.ph-trade-price-drop {
+  border: 2px solid #6fae5c;
+  border-radius: 9px;
+  padding: 1px 4px 1px 1px;
+}
+
 /* The cheapest listing at save time — a snapshot, not a live price, hence
    the gold tint (draws the eye) but no "live" implication in the styling. */
 .ph-trade-price {
@@ -512,34 +582,32 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   white-space: nowrap;
 }
 
-/* Cheaper/pricier than the last time this trade's price was checked —
-   green/red from a buyer's-eye view (this extension is for finding things
-   to buy, not sell), shown right next to .ph-trade-price so the direction
-   reads at a glance. */
+/* Cheaper/pricier than the last time this trade's price was checked — a
+   small filled pill, the same green/red diff-pill language as
+   .ph-hover-diff in the price-history popup, kept up-to-date with move
+   size via three fill intensities (dull/light/neon, same 10%/30%
+   thresholds as arrowTier) rather than the popup diff pills' flat
+   two-tone — the popup already shows the exact number next to it, so it
+   doesn't need a second way to signal magnitude, but the arrow here is
+   all you get at a glance scrolling through a folder. */
 .ph-trade-trend {
   flex: 0 0 auto;
   font-size: 11px;
   font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
 }
-.ph-trend-down { color: #6fae5c; }
-.ph-trend-up { color: var(--ph-danger); }
+.ph-trend-down { color: #8bd977; }
+.ph-trend-up { color: #ff6b6b; }
+.ph-trend-same { color: var(--ph-muted); background: rgba(163, 160, 154, 0.16); }
 
-/* Move size on top of direction — deliberately asymmetric, not just a
-   bigger/bolder version of the same accent: a drop tops out at a gold
-   border (still reads as "green," just a stronger accent), but a big rise
-   inverts to a solid red fill with a black arrow — a real stop-and-look
-   warning, not just a thicker green/red outline. */
-.ph-trend-down.ph-trend-tier-light { border: 1px solid #6fae5c; border-radius: 3px; padding: 0 2px; }
-.ph-trend-down.ph-trend-tier-neon { border: 1px solid var(--ph-gold); border-radius: 3px; padding: 0 2px; }
+.ph-trend-down.ph-trend-tier-dull { background: rgba(111, 174, 92, 0.14); }
+.ph-trend-down.ph-trend-tier-light { background: rgba(111, 174, 92, 0.3); }
+.ph-trend-down.ph-trend-tier-neon { background: rgba(111, 174, 92, 0.48); }
 
-.ph-trend-up.ph-trend-tier-light { border: 1px solid var(--ph-danger); border-radius: 3px; padding: 0 2px; }
-.ph-trend-up.ph-trend-tier-neon {
-  color: #000;
-  background: var(--ph-danger);
-  border: 1px solid var(--ph-danger);
-  border-radius: 3px;
-  padding: 0 2px;
-}
+.ph-trend-up.ph-trend-tier-dull { background: rgba(255, 55, 55, 0.14); }
+.ph-trend-up.ph-trend-tier-light { background: rgba(255, 55, 55, 0.3); }
+.ph-trend-up.ph-trend-tier-neon { background: rgba(255, 55, 55, 0.48); }
 
 /* poe.ninja's average, shown alongside .ph-trade-price — deliberately more
    muted than it: it's a reference number for comparison, not the headline
@@ -607,24 +675,45 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   border-top: 1px solid var(--ph-line);
   background: #241b1a;
 }
-.ph-confirm-msg { flex: 1 1 140px; font-size: 12px; }
+.ph-confirm-msg { flex: 1 1 140px; font-size: 12px; white-space: pre-line; }
 
 /* ---- saved listings ---- */
 
-/* The save button injected into a result row's own button cluster
-   (.details .btns), styled to sit alongside the trade site's own buttons
-   there rather than looking like part of our panel. */
+/* The save button injected right after a result row's own button cluster
+   (.details .btns), on its own line below — that row is a tight fit for the
+   trade site's own buttons already, so a transparent, low-opacity button
+   squeezed in there was nearly impossible to see. */
 .ph-save-btn {
-  margin-left: 4px;
-  padding: 1px 6px;
-  border: 1px solid transparent;
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--ph-line);
   border-radius: 3px;
-  background: none;
+  background: var(--ph-surface-2);
+  color: var(--ph-ink);
   cursor: pointer;
-  opacity: 0.6;
-  font-size: 12px;
+  font-size: 12.5px;
+  text-align: center;
 }
-.ph-save-btn:hover { opacity: 1; border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+.ph-save-btn:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); color: var(--ph-gold); }
+
+/* Already saved (see PH.saved.syncSaveButtons) — disabled rather than a
+   second click target, since un-saving happens from the Saved tab, not by
+   clicking this again. */
+.ph-save-btn-saved {
+  cursor: default;
+  color: var(--ph-muted);
+  border-color: var(--ph-line);
+  background: var(--ph-surface);
+}
+.ph-save-btn-saved:hover { border-color: var(--ph-line); background: var(--ph-surface); color: var(--ph-muted); }
+
+/* Filter box + price-sort toggle, above the list — see searchSortToolbar
+   in saved.js. */
+.ph-saved-search-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.ph-saved-search-row .ph-input { flex: 1 1 auto; width: auto; }
+.ph-saved-search-row .ph-btn { flex: 0 0 auto; white-space: nowrap; }
 
 .ph-saved-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -634,11 +723,152 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   background: var(--ph-surface);
   padding: 8px;
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ph-saved-row.ph-dragging { opacity: 0.4; }
+.ph-saved-row { cursor: grab; }
+
+/* A listing or group-head currently being dragged over as a drop target
+   (see wireGroupDrag) — a gold outline reads as "drop here" without
+   needing to also shift layout the way a border would. */
+.ph-drop-target { outline: 2px solid var(--ph-gold); outline-offset: -2px; border-radius: 4px; }
+
+/* A group card — same shape as a Bookmarks folder (.ph-folder/.ph-folder-head
+   /.ph-folder-title in the folders section below): a header banded across
+   the full width of the card, rounded only at the top since a body
+   follows, over its members — each still a plain .ph-saved-row so a
+   grouped listing looks the same as a standalone one, just indented
+   under a shared heading. */
+.ph-saved-group {
+  border: 1px solid var(--ph-line);
+  border-radius: 4px;
+  background: var(--ph-surface);
+}
+.ph-saved-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 6px 6px 8px;
+  background: linear-gradient(var(--ph-surface-3), var(--ph-surface-2));
+  border-bottom: 1px solid var(--ph-line);
+  border-radius: 4px 4px 0 0;
+}
+
+/* The header bar tinted by the group's own highest rarity (see
+   highestRarity/RARITY_RANK in saved.js) — same colors as .ph-rarity-*
+   on an individual listing's title, applied here as a low-opacity wash
+   over the header's usual gradient plus a matching border, rather than
+   full-strength text color, so the uppercase title stays legible against
+   it. .ph-saved-group itself picks up the same class for its outer
+   border, so the tint reads as one continuous accent around the whole
+   card, not just the header strip. */
+.ph-saved-group.ph-rarity-magic { border-color: #8888ff; }
+.ph-saved-group.ph-rarity-rare { border-color: #ffff77; }
+.ph-saved-group.ph-rarity-unique { border-color: #af6025; }
+.ph-saved-group.ph-rarity-currency { border-color: #aa9e82; }
+.ph-saved-group.ph-rarity-gem { border-color: #1ba29b; }
+.ph-saved-group.ph-rarity-normal { border-color: #c8c8c8; }
+
+.ph-saved-group.ph-rarity-magic .ph-saved-group-head { background: linear-gradient(rgba(136, 136, 255, 0.22), var(--ph-surface-2)); border-bottom-color: #8888ff; }
+.ph-saved-group.ph-rarity-rare .ph-saved-group-head { background: linear-gradient(rgba(255, 255, 119, 0.2), var(--ph-surface-2)); border-bottom-color: #ffff77; }
+.ph-saved-group.ph-rarity-unique .ph-saved-group-head { background: linear-gradient(rgba(175, 96, 37, 0.32), var(--ph-surface-2)); border-bottom-color: #af6025; }
+.ph-saved-group.ph-rarity-currency .ph-saved-group-head { background: linear-gradient(rgba(170, 158, 130, 0.28), var(--ph-surface-2)); border-bottom-color: #aa9e82; }
+.ph-saved-group.ph-rarity-gem .ph-saved-group-head { background: linear-gradient(rgba(27, 162, 155, 0.28), var(--ph-surface-2)); border-bottom-color: #1ba29b; }
+.ph-saved-group.ph-rarity-normal .ph-saved-group-head { background: linear-gradient(rgba(200, 200, 200, 0.18), var(--ph-surface-2)); border-bottom-color: #c8c8c8; }
+/* Collapse toggle — same shape as .ph-folder-toggle in Bookmarks, wrapping
+   the chevron/title/count as one clickable region that fills the header
+   next to the fixed-width actions on the right. */
+.ph-saved-group-toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px;
+  border: 0;
+  background: none;
+  color: var(--ph-ink);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.ph-saved-group-chevron { flex: 0 0 auto; width: 10px; color: var(--ph-muted); font-size: 10px; }
+.ph-saved-group-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ph-ink);
+}
+.ph-saved-group-count {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--ph-line);
+  border-radius: 8px;
+  background: var(--ph-surface);
+  color: var(--ph-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* Room for more than the sort button here later — see the note above
+   groupRow's own sortBtn. */
+.ph-saved-group-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+
+.ph-saved-group-members { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.ph-saved-group-members .ph-saved-row { background: var(--ph-surface-2); }
+
+/* The standing "drag here to remove from a group" target — see
+   ungroupedDropZone in saved.js. Dashed border and muted styling mark it
+   as a utility zone, not a real group card. */
+.ph-saved-ungroup-zone {
+  border: 1px dashed var(--ph-line);
+  border-radius: 4px;
+  padding: 8px;
+  text-align: center;
+  color: var(--ph-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+.ph-saved-ungroup-zone.ph-drop-target { border-style: solid; color: var(--ph-ink); }
+
+/* The item's own artwork, captured at save time (see .icon img in
+   saved.js) — a plain icon, not the full rarity/frame background some
+   rows also carry (shaper, elder, ...), which isn't captured. No border or
+   padding — the art fills the box itself rather than shrinking to leave
+   room for a frame around it; a subtle background swatch is enough for a
+   transparent-background icon to still read against the row. */
+.ph-saved-icon {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--ph-surface-2);
+}
+
+.ph-saved-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
 .ph-saved-head { display: flex; align-items: baseline; gap: 8px; }
+
+/* .ph-saved-head is align-items:baseline for the title/price text, which
+   leaves a checkbox sitting oddly high — pull it back down to the row's
+   vertical center instead of fighting the shared baseline alignment. */
+.ph-saved-check { flex: 0 0 auto; align-self: center; margin: 0; }
 
 .ph-saved-title {
   flex: 1 1 auto;
@@ -651,7 +881,32 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   color: var(--ph-link);
 }
 
-.ph-saved-price { flex: 0 0 auto; color: var(--ph-gold); font-size: 12px; }
+/* The standard Path of Exile rarity palette (the same colors the game
+   client, the trade site's own item popups, and every third-party PoE
+   tool use) — not pixel-verified against the trade site's own CSS custom
+   properties specifically, but these exact values are effectively a
+   universal constant across the game and its tooling, not a per-site
+   styling choice. Overrides .ph-saved-title's plain color above by
+   source order; a listing saved before rarity was captured (or one whose
+   rarity came back as something other than these) just keeps that
+   default instead of going uncolored. */
+.ph-rarity-normal { color: #c8c8c8; }
+.ph-rarity-magic { color: #8888ff; }
+.ph-rarity-rare { color: #ffff77; }
+.ph-rarity-unique { color: #af6025; }
+.ph-rarity-gem { color: #1ba29b; }
+.ph-rarity-currency { color: #aa9e82; }
+
+.ph-saved-price {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--ph-gold);
+  font-size: 12px;
+}
+
+.ph-saved-price-icon { width: 15px; height: 15px; object-fit: contain; }
 
 .ph-saved-meta { color: var(--ph-muted); font-size: 10.5px; }
 
@@ -661,6 +916,18 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   color: var(--ph-ink);
   font-size: 11.5px;
   line-height: 1.5;
+}
+
+/* Shown in place of .ph-saved-mods — an unidentified item has nothing
+   rolled yet to list. Red text + border to match the trade site's own
+   "Unidentified" styling on the item itself (var(--colour-unmet) there). */
+.ph-saved-unidentified {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border: 1px solid var(--ph-danger);
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--ph-danger);
 }
 
 /* ---- backup ---- */
@@ -702,10 +969,15 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 }
 
 .ph-converted {
-  margin-left: 6px;
+  display: block;
+  margin: 3px auto 0;
+  padding: 1px 5px;
+  border: 1px solid var(--ph-line);
+  border-radius: 3px;
   font-size: 0.85em;
   color: #9aa8b8;
   white-space: nowrap;
+  width: fit-content;
 }
 
 .ph-offscreen {

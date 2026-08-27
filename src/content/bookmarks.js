@@ -21,6 +21,12 @@ PH.bookmarks = (() => {
 
   const showArchive = () => localStorage.getItem(SHOW_ARCHIVE_KEY) === "true";
 
+  /* Debounces Total Cost history pushes — see the note above renderTrades'
+     own push. One timer per folder (a Map, not a single variable) since
+     more than one folder can be open and settling at once. */
+  const totalCostPushTimers = new Map(); // folderId -> setTimeout id
+  const TOTAL_COST_PUSH_DEBOUNCE_MS = 4000;
+
   /* An inline editor open somewhere in the tree — we keep one at a time so
      the panel never fills up with half-finished forms. */
   let editing = null; // { kind, folderId?, tradeId? }
@@ -90,10 +96,10 @@ PH.bookmarks = (() => {
         class: "ph-btn ph-btn-primary",
         onClick: () => setEditing(editing?.kind === "new-folder" ? null : { kind: "new-folder" }),
       }),
-      button("⤓ Import folder", {
+      button("Import folder", {
         onClick: () => setEditing(editing?.kind === "import-folder" ? null : { kind: "import-folder" }),
       }),
-      button(showArchive() ? "← Back to active" : `🗄 Archive${archived ? ` (${archived})` : ""}`, {
+      button(showArchive() ? "Back to active" : `Archive${archived ? ` (${archived})` : ""}`, {
         onClick: () => {
           localStorage.setItem(SHOW_ARCHIVE_KEY, String(!showArchive()));
           PH.panel.refresh();
@@ -150,9 +156,12 @@ PH.bookmarks = (() => {
     const { badge: totalBadge, trendBadge: totalTrendBadge } = priceTrendUI(totalHistory, {
       badgeClass: "ph-folder-total",
       formatLatest: (entry) => `Total Cost: ${formatChaosOrDivine(entry.amount)}`,
-      formatLine: (entry) => `${formatHistoryTimestamp(entry.capturedAt)} — ${formatChaosOrDivine(entry.amount)}`,
+      formatAmount: (entry) => formatChaosOrDivine(entry.amount),
+      historyTitle: "Total cost history",
       trendTitle: (trend) =>
-        `Total cost ${trend.direction === "down" ? "went down" : "went up"} since you last opened this folder (${trend.percent}% ${trend.direction})`,
+        trend.direction === "same"
+          ? "Same total cost as the last time this folder was opened"
+          : `Total cost ${trend.direction === "down" ? "went down" : "went up"} since you last opened this folder (${trend.percent}% ${trend.direction})`,
     });
 
     /* Built as one el() call (children passed directly) rather than a
@@ -227,18 +236,33 @@ PH.bookmarks = (() => {
   /* Sum of each trade's most recently captured price, converted to a
      chaos-equivalent so mixed chaos/divine trades add up sensibly — same
      conversion priceTrend and the sparkline use. Trades with no captured
-     price yet (never saved with a price, or a divine entry before the
-     exchange rate loaded) just don't contribute, rather than treating
-     "unknown" as 0. Returns null if nothing in the folder has a price to
-     count at all — distinct from 0, which means "priced trades that
-     happen to sum to zero," not "nothing priced." */
+     price yet (never saved with a price) just don't contribute, rather
+     than treating "unknown" as 0. Returns null if nothing in the folder
+     has a price to count at all — distinct from 0, which means "priced
+     trades that happen to sum to zero," not "nothing priced."
+
+     Also returns null — the whole total, not just that one trade — if a
+     divine-priced trade exists but can't be converted right now (the
+     exchange rate hasn't loaded yet). An earlier version silently dropped
+     just that trade from the sum, which produced a technically-valid-
+     looking but wrong (too low) total; since renderTrades pushes any total
+     that differs from what's already stored, that wrong number would get
+     recorded as a real history entry — visible as the price oscillating
+     between the real total and a smaller one on every re-render, since
+     each one looked like a genuine change from the last. Bailing out
+     entirely here means renderTrades' own null check skips the push that
+     render instead, leaving the last real total alone until a render with
+     the rate actually loaded corrects it. */
   function totalCostFor(trades) {
     let total = 0;
     let any = false;
     for (const trade of trades) {
       const latest = (trade.priceHistory ?? (trade.priceAtSave ? [trade.priceAtSave] : [])).at(-1);
-      const chaos = latest ? toChaosEquivalent(latest) : null;
-      if (chaos != null) { total += chaos; any = true; }
+      if (!latest) continue;
+      const chaos = toChaosEquivalent(latest);
+      if (chaos == null) return null;
+      total += chaos;
+      any = true;
     }
     return any ? total : null;
   }
@@ -247,25 +271,33 @@ PH.bookmarks = (() => {
     const trades = await PH.store.getTrades(folder.id);
 
     /* Total Cost recomputes on every render of an open folder, same as the
-       trade rows below it draw from this same `trades` — so it never
-       visibly disagrees with what's actually shown per-trade. The only
-       thing guarding against a runaway refresh loop is the value check
-       below (renderTrades runs again after every push, since that's a
-       storage write PH.store.onChange reacts to — but the second run
-       finds freshTotal already matches what's now stored and skips
-       pushing again, so it settles after one extra cycle rather than
-       looping forever). Not just left to PH.store.pushFolderTotalCost's
-       own dedup, which still performs a write (a timestamp refresh on the
-       latest entry) — that write alone would be enough to keep the loop
-       going. */
+       trade rows below it draw from this same `trades` — so what's shown
+       never visibly disagrees with what's actually shown per-trade. The
+       actual history push is debounced, not immediate, though: each trade
+       updates its own price independently (visiting one bookmarked search
+       at a time, or "Search this exact item" landing on a fresh price), so
+       checking several items in a row would otherwise recompute and push a
+       new total after *each* one — one history slot per trade checked,
+       not one entry for the settled result once you're done. Scheduling
+       the push a few seconds out and re-scheduling (not stacking) on every
+       subsequent render means only the *last* total in a burst actually
+       gets recorded — see totalCostPushTimers above. Once that push
+       finally lands, PH.store.onChange fires renderTrades again, freshTotal
+       now matches what's stored, and no new timer gets scheduled — so this
+       still settles after one extra cycle rather than looping forever,
+       same guarantee the immediate version had. */
     const freshTotal = totalCostFor(trades);
     const lastRecorded = folder.totalCostHistory?.at(-1)?.amount ?? null;
     if (freshTotal != null && freshTotal !== lastRecorded) {
-      await PH.store.pushFolderTotalCost(folder.id, {
-        amount: freshTotal,
-        currency: "chaos",
-        capturedAt: new Date().toISOString(),
-      });
+      clearTimeout(totalCostPushTimers.get(folder.id));
+      totalCostPushTimers.set(folder.id, setTimeout(() => {
+        totalCostPushTimers.delete(folder.id);
+        PH.store.pushFolderTotalCost(folder.id, {
+          amount: freshTotal,
+          currency: "chaos",
+          capturedAt: new Date().toISOString(),
+        });
+      }, TOTAL_COST_PUSH_DEBOUNCE_MS));
     }
 
     if (trades.length === 0 && editing?.kind !== "new-trade") {
@@ -317,13 +349,24 @@ PH.bookmarks = (() => {
     const history = trade.priceHistory ?? (trade.priceAtSave ? [trade.priceAtSave] : []);
     const latest = history.at(-1) ?? null;
 
-    const { badge: priceBadge, trendBadge } = priceTrendUI(history, {
+    const { badge: priceBadge, trendBadge, trend, trendTier } = priceTrendUI(history, {
       badgeClass: "ph-trade-price",
       formatLatest: formatPrice,
-      formatLine: (entry) => `${formatHistoryTimestamp(entry.capturedAt)} — ${formatPrice(entry)}`,
+      formatAmount: formatPrice,
+      historyTitle: "Price history",
       trendTitle: (trend) =>
-        `${trend.direction === "down" ? "Cheaper" : "Pricier"} than the last time this was checked (${trend.percent}% ${trend.direction})`,
+        trend.direction === "same"
+          ? "Same price as the last time this was checked"
+          : `${trend.direction === "down" ? "Cheaper" : "Pricier"} than the last time this was checked (${trend.percent}% ${trend.direction})`,
     });
+
+    /* Price + arrow grouped into one pill so a big (30%+) drop can outline
+       just the two of them, not the whole row and not the arrow alone —
+       see the ph-trade-price-drop rule in panel.css. */
+    const priceGroup = el("span", { class: "ph-trade-price-group" }, priceBadge, trendBadge);
+    if (trend?.direction === "down" && trendTier === "neon") {
+      priceGroup.classList.add("ph-trade-price-drop");
+    }
 
     /* Only attempted alongside priceBadge — see the "when available" framing
        this was asked for. Best-effort name match against poe.ninja's data;
@@ -364,20 +407,17 @@ PH.bookmarks = (() => {
         })
       : null;
 
-    if (avgBadge) {
-      const lines = [
-        `poe.ninja average, ${ninja.listingCount} listing${ninja.listingCount === 1 ? "" : "s"}`,
-        "May not match this exact item's variant (links, mods, gem level/quality, etc.)",
-      ];
-      if (ninja.ninjaUrl) lines.push("Click to view on poe.ninja");
-      PH.ui.hoverPopup(avgBadge, lines);
+    /* Only when there's actually somewhere to click — no ninjaUrl means
+       nothing happens on click, so a "click to view" popup would be
+       misleading. */
+    if (avgBadge && ninja.ninjaUrl) {
+      PH.ui.hoverPopup(avgBadge, ["Click to view on PoE Ninja"]);
     }
 
     const link = url
-      ? el("a", { class: "ph-trade-link", href: url, title: `${league} · ${trade.location.slug}` },
+      ? el("a", { class: "ph-trade-link", href: url },
           el("span", { class: "ph-trade-title", text: trade.title }),
-          priceBadge,
-          trendBadge,
+          priceGroup,
           avgBadge,
           trade.location.league ? el("span", { class: "ph-pin-badge", text: trade.location.league, title: "Pinned to this league" }) : null
         )
@@ -385,8 +425,7 @@ PH.bookmarks = (() => {
          league in the URL. Say so rather than rendering a dead link. */
       : el("span", { class: "ph-trade-link ph-trade-dead", title: "Open any league's trade page and this will light up" },
           el("span", { class: "ph-trade-title", text: trade.title }),
-          priceBadge,
-          trendBadge,
+          priceGroup,
           avgBadge,
           el("span", { class: "ph-pin-badge", text: "no league" })
         );
@@ -632,42 +671,54 @@ PH.bookmarks = (() => {
   }
 
   /* {direction: "down"/"up", percent}, or null (no signal — equal, or not
-     comparable). Just the raw numbers — the trend arrow and the price-
-     history row each turn `percent` into their own tier boundaries (see
-     arrowTier/rowTier below), since the two don't share the same scheme.
-     The two entries can be in different currencies (the cheapest listing
+     comparable). Just the raw numbers — the trend arrow turns `percent`
+     into its own tier boundaries (see arrowTier below). The two entries
+     can be in different currencies (the cheapest listing
      isn't always the same currency twice), so this converts both to a
      chaos-equivalent using the same exchange rate prices.js already keeps
      loaded — never guessed, and if the rate isn't loaded and the currencies
      differ, we just don't show a trend rather than compare apples to
      oranges. */
   /* Also used by the sparkline (toChaosEquivalent) to put a trade's whole
-     price history on one comparable scale. */
+     price history on one comparable scale. currency is only ever exactly
+     "chaos" or "divine" for those two (see readCurrency in prices.js) —
+     any other currency (Orb of Fusing, Exalted Orb, ...) has no real rate
+     available (poe.ninja only feeds this extension a chaos<->divine
+     rate), so it's floored to a flat ~1 chaos-equivalent rather than left
+     uncomparable — an explicit, deliberate approximation for sorting/
+     trend/total-cost math on a small, user-curated set of trades, not a
+     real conversion. In practice a bookmarked trade's own price rarely
+     lands here in an exotic currency at all, since PH.prices.cheapestOnPage
+     (what actually seeds a trade's price) only ever compares chaos/divine
+     listings to begin with — this exists for whatever does reach here
+     with something else, rather than leaving it uncomparable by surprise. */
   function toChaosEquivalent(entry) {
+    if (entry.currency === "chaos") return entry.amount;
     const rate = PH.prices.currentRate();
-    return entry.currency === "chaos" ? entry.amount : rate ? entry.amount * rate.divineInChaos : null;
+    if (entry.currency === "divine") return rate ? entry.amount * rate.divineInChaos : null;
+    return 1;
   }
 
   function priceTrend(latest, previous) {
     const before = toChaosEquivalent(previous);
     const after = toChaosEquivalent(latest);
-    if (before == null || after == null || before === after) return null;
+    if (before == null || after == null) return null;
+    if (before === after) return { direction: "same", percent: 0 };
 
     const direction = after < before ? "down" : "up";
     const percent = Math.round(Math.abs((after - before) / before) * 100);
     return { direction, percent };
   }
 
-  /* The arrow only calls out a move once it's notable: no extra styling
-     under 10%, a colored border at 10%+, a different accent at 30%+ (gold
-     for a big drop, an inverted black-on-red fill for a big rise — see
-     .ph-trend-tier-* in panel.css for why the two aren't symmetric). */
-  const arrowTier = (percent) => (percent >= 30 ? "neon" : percent >= 10 ? "light" : null);
-
-  /* The price-history row highlights every entry, on a 3-step scale from a
-     dull tint (still under 10%) through solid (10%+) to bright (30%+) —
-     unlike the arrow, even a small move gets some color here. */
-  const rowTier = (percent) => (percent >= 30 ? "bright" : percent >= 10 ? "solid" : "dull");
+  /* Three fill-intensity tiers for the trend arrow's own pill (dull under
+     10%, light at 10%+, neon at 30%+ — see .ph-trend-tier-* in panel.css),
+     plus "neon" doubles as the trigger for the bigger price-drop flair
+     around the whole price group (.ph-trade-price-drop). Always returns a
+     tier — unlike the price-history popup's diff pills, which stay flat
+     two-tone since the exact number is right there next to them, the
+     arrow is all you get at a glance scrolling a folder, so even a small
+     move gets some fill. */
+  const arrowTier = (percent) => (percent >= 30 ? "neon" : percent >= 10 ? "light" : "dull");
 
   /* Used for Total Cost, which is always tracked in chaos (see
      totalCostFor) but reads better in divine once it's worth 1+ — same
@@ -680,40 +731,65 @@ PH.bookmarks = (() => {
       : `${Math.round(amount)}c`;
   }
 
+  /* Same chaos/divine threshold as formatChaosOrDivine, but signed — used
+     for the +/- delta shown next to each price-history line. */
+  function formatChaosDelta(diff) {
+    const abs = Math.abs(diff);
+    const sign = diff > 0 ? "+" : "-";
+    const rate = PH.prices.currentRate();
+    return rate && abs >= rate.divineInChaos
+      ? `${sign}${(abs / rate.divineInChaos).toFixed(1)} div`
+      : `${sign}${Math.round(abs)}c`;
+  }
+
   /* Shared by tradeRow (trade.priceHistory) and folderRow
      (folder.totalCostHistory) — the "current value" badge, its trend arrow,
-     and the hover popup (history list with per-row tiering, plus a
-     sparkline), built from any {amount, currency, capturedAt} history
-     array, oldest first. formatLatest/formatLine control how an entry's
-     amount is displayed, since trades show their own native currency and
-     Total Cost converts to divine past a threshold. */
-  function priceTrendUI(history, { badgeClass, formatLatest, formatLine, trendTitle }) {
+     and the hover popup (a small time/price/diff table, plus a sparkline),
+     built from any {amount, currency, capturedAt} history array, oldest
+     first. formatLatest/formatAmount control how an entry's amount is
+     displayed, since trades show their own native currency and Total Cost
+     converts to divine past a threshold — formatLatest is just the badge
+     (Total Cost's gets a "Total Cost: " prefix the popup rows don't need),
+     formatAmount is the bare price used in each popup row. */
+  function priceTrendUI(history, { badgeClass, formatLatest, formatAmount, historyTitle, trendTitle }) {
     const latest = history.at(-1) ?? null;
     const previous = history.length >= 2 ? history.at(-2) : null;
     const trend = latest && previous ? priceTrend(latest, previous) : null;
 
     const badge = latest
-      /* title:"" suppresses the native tooltip an element would otherwise
-         inherit from an ancestor's own title (the trade row's <a> shows
-         the league/slug, which visually collided with this popup). */
+      /* title:"" keeps this from ever inheriting a native tooltip from an
+         ancestor — nothing sets one today, but this stops one from
+         silently colliding with the custom hover popup below if an
+         ancestor ever gains one later. */
       ? el("span", { class: badgeClass, title: "", text: formatLatest(latest) })
       : null;
 
     if (badge) {
-      /* Each entry highlighted against its own predecessor (history[i - 1],
-         not the reversed display order) — see rowTier for the color scale.
-         The oldest entry has no predecessor, so it never gets a highlight.
-         Newest first for display — most recent observation is what you
-         care about first. */
-      const lines = history.map((entry, i) => {
-        const t = i > 0 ? priceTrend(entry, history[i - 1]) : null;
-        return {
-          text: formatLine(entry),
-          class: t ? `ph-hover-popup-line-${t.direction}-${rowTier(t.percent)}` : "",
-        };
-      }).reverse();
+      /* One flat grid (see .ph-hover-grid in panel.css) instead of one
+         wrapper div per row, so every row's time/price/diff columns line
+         up like a small table rather than each row sizing its own columns
+         independently — each entry contributes exactly 3 children (a
+         placeholder <span> for "no diff to show" so the column count per
+         row never drifts). Newest first — the most recent observation is
+         what you care about first. */
+      const cells = history.map((entry, i) => {
+        const prev = i > 0 ? history[i - 1] : null;
+        const before = prev ? toChaosEquivalent(prev) : null;
+        const after = prev ? toChaosEquivalent(entry) : null;
+        const diff = before != null && after != null ? after - before : null;
 
-      /* A plain, single-color trend line above the list — oldest to newest
+        return [
+          el("span", { class: "ph-hover-time", text: formatHistoryTimestamp(entry.capturedAt) }),
+          el("span", { class: "ph-hover-price", text: formatAmount(entry) }),
+          diff
+            ? el("span", { class: `ph-hover-diff ph-hover-diff-${diff > 0 ? "up" : "down"}`, text: formatChaosDelta(diff) })
+            : el("span"),
+        ];
+      }).reverse().flat();
+
+      const lines = [el("div", { class: "ph-hover-grid" }, cells)];
+
+      /* A plain, single-color trend line above the table — oldest to newest
          left-to-right (chart convention), colored by the same up/down
          `trend` used for the arrow next to the badge. Skipped entirely
          rather than guessed at when there's nothing to compare (one entry)
@@ -722,23 +798,29 @@ PH.bookmarks = (() => {
          itself. */
       const sparkValues = history.map(toChaosEquivalent);
       if (history.length >= 2 && sparkValues.every((v) => v != null)) {
-        const color = trend ? (trend.direction === "down" ? "#6fae5c" : "var(--ph-danger)") : "var(--ph-muted)";
+        const color =
+          trend?.direction === "down" ? "#6fae5c" :
+          trend?.direction === "up" ? "var(--ph-danger)" :
+          "var(--ph-muted)";
         lines.unshift(PH.ui.sparklineSvg(sparkValues, color));
       }
 
-      PH.ui.hoverPopup(badge, lines);
+      PH.ui.hoverPopup(badge, lines, { title: historyTitle });
     }
 
-    const trendTier = trend ? arrowTier(trend.percent) : null;
+    /* "same" never gets a tier — 0% never crosses arrowTier's 10%/30%
+       thresholds anyway, but being explicit here means that stays true
+       even if those thresholds ever change. */
+    const trendTier = trend && trend.direction !== "same" ? arrowTier(trend.percent) : null;
     const trendBadge = trend
       ? el("span", {
           class: `ph-trade-trend ph-trend-${trend.direction}${trendTier ? ` ph-trend-tier-${trendTier}` : ""}`,
           title: trendTitle(trend),
-          text: trend.direction === "down" ? "▼" : "▲",
+          text: trend.direction === "same" ? "=" : trend.direction === "down" ? "▼" : "▲",
         })
       : null;
 
-    return { badge, trendBadge };
+    return { badge, trendBadge, trend, trendTier };
   }
 
   /* ---------------------------------------------------------- import/export */
@@ -838,13 +920,13 @@ PH.bookmarks = (() => {
     return el("div", { class: "ph-backup" },
       el("div", { class: "ph-backup-label", text: "Backup tools" }),
       el("div", { class: "ph-backup-actions" },
-        button("⤓ Save file", {
+        button("Save file", {
           onClick: async () => {
             PH.exchange.downloadBackup(await PH.exchange.generateBackupText());
             toast("Backup downloaded");
           },
         }),
-        button("⤒ Restore from file", { onClick: () => filePicker.click() })
+        button("Restore from file", { onClick: () => filePicker.click() })
       ),
       el("div", { class: "ph-backup-note", text: "Reads Better Trading backups too. Restoring adds folders, it never deletes." }),
       filePicker

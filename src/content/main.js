@@ -2,8 +2,8 @@
    main.js — boots everything. Loaded last, so every PH.* module exists.
    =========================================================================
    Reading order for this project: store.js (what's saved) → location.js (how
-   trade URLs work) → panel.js (the shell) → bookmarks/live-searches/saved
-   (the tabs) → this file (wiring).
+   trade URLs work) → panel.js (the shell) → bookmarks/saved (the tabs) →
+   this file (wiring).
    ========================================================================= */
 
 const LOG = (...args) => console.log("[PoE Helper]", ...args);
@@ -96,14 +96,16 @@ async function checkLocation() {
 
 /* Once real results are showing for whatever search we're now on, ask
    Bookmarks to record a price observation if this happens to be a search
-   we've saved — once per visit, not once per poll tick. This is the same
-   DOM the page already loaded on its own; nothing is fetched or clicked to
-   make this happen. */
+   we've saved, and ask Saved listings to do the same if this tab was
+   opened by "Search this exact item" — once per visit, not once per poll
+   tick. This is the same DOM the page already loaded on its own; nothing
+   is fetched or clicked to make this happen. */
 function checkResultsForPricing() {
   if (pricedThisVisit) return;
   if (!document.querySelector(".resultset > div.row[data-id]")) return;
   pricedThisVisit = true;
   PH.bookmarks.notePriceIfMatch();
+  PH.saved.capturePendingPrice();
 }
 
 function startPolling() {
@@ -128,8 +130,9 @@ async function boot() {
   const settings = await PH.store.getSettings();
   tildeEnabled = settings.tildePrefix !== false;
 
+  await PH.saved.initPriceCapture();
+
   PH.panel.registerTab("bookmarks", (container) => PH.bookmarks.render(container));
-  PH.panel.registerTab("live", (container) => PH.liveSearches.render(container));
   PH.panel.registerTab("saved", (container) => PH.saved.render(container));
 
   const mounted = PH.panel.mount();
@@ -152,7 +155,17 @@ async function boot() {
       tildeEnabled = next.tildePrefix !== false;
       PH.prices.setEnabled(next.showPriceConversion !== false);
     }
-    if (changes.folders || changes.trades || changes.liveSearches || changes.savedListings) PH.panel.refresh();
+    /* savedGroups on its own (not paired with a savedListings write) only
+       happens for a pure group rename — every other group action
+       (creating one, ungrouping, a listing being deleted out from under
+       one) also touches savedListings in the same flow, which already
+       covers it. */
+    if (changes.folders || changes.trades || changes.savedListings || changes.savedGroups) PH.panel.refresh();
+    /* Keeps a result row's own "Save Listing"/"Saved" button in sync with
+       storage — covers removing a listing from the Saved tab (in this tab
+       or a different one) reverting the button on the search results tab
+       it came from, if that tab still has the row on screen. */
+    if (changes.savedListings) PH.saved.syncSaveButtons();
   });
 
   LOG("ready");

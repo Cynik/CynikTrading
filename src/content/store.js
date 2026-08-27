@@ -35,8 +35,124 @@
                     saved before this existed may still carry the old
                     singular `priceAtSave` field — readers fall back to
                     treating it as a 1-entry history.
-     liveSearches [ { id, title, addedAt, location } ]   flat, not per-folder
-     savedListings [ { id, savedAt, league, location, title, price, seller, mods } ]
+     savedListings [ { id, savedAt, listedAt, league, location, sourceId,
+                       title, name, type, icon, rarity, unidentified,
+                       price, priceIcon, seller, mods, priceHistory?,
+                       groupId? } ]
+                    groupId, when set, references a savedGroups entry
+                    (below) — set by dragging one listing onto another,
+                    cleared (deleted along with an empty group) by
+                    ungrouping. Absent for a listing that's never been
+                    manually grouped.
+                    rarity is GGG's own item-popup--<rarity> class, read
+                    generically (see itemRarity in saved.js) — "unique",
+                    "currency", and "magic" confirmed against real rows;
+                    "rare"/"normal" inferred from that same pattern, not
+                    independently seen. Drives two things: rebuildSearch
+                    skips the broken name/type fields for magic/rare (see
+                    the long comment there — a magic/rare item's single
+                    header line mixes rolled affix words into what would
+                    be `type`, which isn't a real base type GGG's trade
+                    API recognizes) in favor of a type_filters.rarity
+                    filter instead, and the Saved tab's auto-grouping
+                    groups magic/rare listings by type alone rather than
+                    by full title. Listings saved before this existed are
+                    just never grouped/searched with rarity in mind.
+                    unidentified is true if GGG showed a plain
+                    "Unidentified" line on the item at save time (see
+                    isUnidentified in saved.js) — its explicit/rolled
+                    affixes are hidden while unidentified, but any
+                    implicit(s) still show and still end up in mods same as
+                    any other listing. Shown as its own badge on the
+                    listing alongside the mods list (not instead of it —
+                    mods may be empty, one implicit, or several), and adds
+                    the misc_filters.identified:"false" filter to "Search
+                    this exact item"'s request so an identified copy of the
+                    same base doesn't creep back into results that would
+                    otherwise be name/type-only. Listings saved before this
+                    existed are just never treated as unidentified, even if
+                    they were.
+                    icon is the item's own artwork <img src> (web.poecdn.com),
+                    priceIcon the currency image's own <img src> from GGG's
+                    CDN — both captured at save time since a saved listing
+                    has no live row left to re-read them from later;
+                    listings saved before icon existed just have no item
+                    image. listedAt is when GGG says the listing itself was
+                    posted (parsed from the row's own "listed X ago" text —
+                    see parseListedAgo in saved.js — so it's only as precise
+                    as that text's unit), separate from savedAt (when you
+                    clicked Save Listing). Set at save time, and refreshed
+                    (see setListingListedAt) every time "Search this exact
+                    item" finds real results, the same visit it captures a
+                    fresh price — the original listing isn't necessarily
+                    still the cheapest match by then (relisted, undercut,
+                    time passed), so this keeps "listed X ago" honest
+                    instead of frozen at whatever it read at save time.
+                    Listings saved before listedAt existed fall back to
+                    showing savedAt instead.
+                    sourceId is the result row's own data-id, GGG's id for
+                    that specific listing — lets PH.saved.syncSaveButtons
+                    recognize "already saved" if the same search turns up
+                    the same listing again; listings saved before this
+                    existed just never match. name/type are the item's
+                    flavour name and base type kept apart
+                    (not joined like the display title), for "Search this
+                    exact item"'s query.name/query.type. mods is
+                    [ { id, text, value } ] — id is the stat's own internal
+                    id from its data-field attribute, for that same
+                    feature's stat filters; listings saved before that
+                    existed just have plain strings instead. priceHistory is
+                    [ { amount, currency, capturedAt } ], oldest first,
+                    capped at 5, same capped/deduped-history shape and
+                    mechanics as a bookmark trade's own priceHistory (see
+                    PH.store.pushTradePrice) — seeded with the price
+                    captured at save time, and appended to whenever
+                    "Search this exact item" finds real results (see
+                    PH.saved.capturePendingPrice and the poll loop in
+                    main.js); a same-price recheck refreshes the latest
+                    entry's timestamp rather than taking a slot, so it
+                    genuinely only grows on an actual price change.
+                    Listings saved before this existed just have no history
+                    — the plain `price` string is still shown as a fallback.
+                    noResultsFound? is true once "Search this exact item"
+                    comes back with zero results — see setListingNoResults —
+                    and drives an inline "remove this?" prompt on the
+                    listing's own row in every tab currently showing it
+                    (not a one-shot cross-tab handoff like
+                    pendingPriceCapture below, since more than one tab can
+                    have this listing's row on screen at once — the results
+                    tab the search itself just opened, and whichever tab
+                    the click came from). Cleared back to unset on either
+                    "Cancel" or the listing being deleted.
+     savedGroups  [ { id, title } ]  manual groups in the Saved tab —
+                    created by dragging one listing onto another (see
+                    PH.saved's drag handlers), a listing's own groupId
+                    references one of these. Deliberately separate from
+                    automatic grouping (same title for most rarities, same
+                    icon for magic/rare — see groupKeyFor in saved.js,
+                    which needs no persisted state since it's recomputed
+                    every render): a manual group is a real, named,
+                    user-made thing, so it gets real identity here the
+                    same way a Bookmarks folder does, while an automatic
+                    group is just a rendering convenience with nothing to
+                    remember. Renaming what started as an automatic group
+                    promotes it into one of these (see PH.saved's rename
+                    handler) rather than being a no-op, since there'd
+                    otherwise be nothing to attach the new name to.
+     pendingPriceCapture  string | null   a saved listing's id — a short-
+                    lived handoff from "Search this exact item" to the
+                    fresh tab it opens, since that tab has no other way to
+                    know which listing to record a price observation
+                    against. Read once by the receiving tab's
+                    PH.saved.initPriceCapture on boot, then immediately
+                    cleared, so a tab that was already open can't also
+                    pick it up.
+     tradeSearchCooldown  number | null   epoch ms; PH.saved.searchTrade
+                    (Saved listings' "Search this exact item") refuses to call
+                    GGG's trade API again before this time, per whatever
+                    the API's own x-rate-limit-* response headers most
+                    recently said our budget was. Shared across tabs since
+                    the content script has no persistent process of its own.
      settings     { tildePrefix, showPriceConversion }
      leagues      { "1": "Allflame", "2": "Runes of Aldur" }   last seen per game
 
@@ -58,8 +174,10 @@ PH.store = (() => {
   const DEFAULTS = {
     folders: [],
     trades: {},
-    liveSearches: [],
     savedListings: [],
+    savedGroups: [],
+    pendingPriceCapture: null,
+    tradeSearchCooldown: null,
     settings: { tildePrefix: true, showPriceConversion: true },
     leagues: {},
   };
@@ -296,54 +414,6 @@ PH.store = (() => {
     await replaceTrades(folderId, reordered);
   }
 
-  /* ------------------------------------------------------- live searches --
-     A flat list (not folder-scoped) of searches you want quick access to
-     open as a live search. Same location shape as a trade, so it survives a
-     league reset the same way bookmarks do. */
-
-  async function getLiveSearches() {
-    return (await readAll()).liveSearches;
-  }
-
-  async function saveLiveSearch(entry) {
-    const { liveSearches } = await readAll();
-    if (entry.id) {
-      const i = liveSearches.findIndex((s) => s.id === entry.id);
-      if (i !== -1) liveSearches[i] = { ...liveSearches[i], ...entry };
-    } else {
-      entry.id = newId();
-      entry.addedAt = entry.addedAt ?? new Date().toISOString();
-      liveSearches.push(entry);
-    }
-    await chrome.storage.local.set({ liveSearches });
-    return entry;
-  }
-
-  async function deleteLiveSearch(id) {
-    const { liveSearches } = await readAll();
-    await chrome.storage.local.set({
-      liveSearches: liveSearches.filter((s) => s.id !== id),
-    });
-  }
-
-  /* Same trick as reorderFolders: the list mixes both games, but the UI only
-     ever shows and reorders one game's entries at a time. Write the reordered
-     visible items back into the slots they already occupied so the hidden
-     game's entries don't get scrambled. */
-  async function reorderLiveSearches(visibleIdsInNewOrder) {
-    const { liveSearches } = await readAll();
-    const slots = [];
-    liveSearches.forEach((s, i) => {
-      if (visibleIdsInNewOrder.includes(s.id)) slots.push(i);
-    });
-    if (slots.length !== visibleIdsInNewOrder.length) return;
-    const byId = new Map(liveSearches.map((s) => [s.id, s]));
-    slots.forEach((slot, n) => {
-      liveSearches[slot] = byId.get(visibleIdsInNewOrder[n]);
-    });
-    await chrome.storage.local.set({ liveSearches });
-  }
-
   /* ---------------------------------------------------------------- leagues */
 
   /* Called whenever the URL changes, purely to remember "the last league you
@@ -379,10 +449,177 @@ PH.store = (() => {
   }
 
   async function deleteSavedListing(id) {
-    const { savedListings } = await readAll();
+    await deleteSavedListings([id]);
+  }
+
+  /* Used by "Clear all" and "Clear selected" — one storage write for
+     however many listings, rather than one per listing. Also dismantles
+     any manual group left with fewer than 2 members once these are gone
+     — a group of exactly one is never really a group (buildGroups in
+     saved.js already refuses to render one as one), so a delete that
+     drops one to 1 clears that survivor's own groupId too, not just a
+     group left at 0. */
+  async function deleteSavedListings(ids) {
+    const idSet = new Set(ids);
+    const { savedListings, savedGroups } = await readAll();
+    const remaining = savedListings.filter((l) => !idSet.has(l.id));
+
+    const countByGroup = new Map();
+    for (const l of remaining) {
+      if (l.groupId) countByGroup.set(l.groupId, (countByGroup.get(l.groupId) ?? 0) + 1);
+    }
+    for (const l of remaining) {
+      if (l.groupId && countByGroup.get(l.groupId) < 2) l.groupId = null;
+    }
+
+    const stillUsed = new Set(remaining.map((l) => l.groupId).filter(Boolean));
     await chrome.storage.local.set({
-      savedListings: savedListings.filter((l) => l.id !== id),
+      savedListings: remaining,
+      savedGroups: (savedGroups ?? []).filter((g) => stillUsed.has(g.id)),
     });
+  }
+
+  /* ---------------------------------------------------------- saved groups */
+
+  async function getSavedGroups() {
+    return (await readAll()).savedGroups ?? [];
+  }
+
+  /* Creates a new manual group and returns it — used both when dragging
+     one listing onto another (a fresh group) and when renaming what was
+     an automatic group (promoting it into a real, named one). */
+  async function createSavedGroup(title) {
+    const { savedGroups } = await readAll();
+    const group = { id: newId(), title };
+    const list = [...(savedGroups ?? []), group];
+    await chrome.storage.local.set({ savedGroups: list });
+    return group;
+  }
+
+  async function renameSavedGroup(id, title) {
+    const { savedGroups } = await readAll();
+    const group = (savedGroups ?? []).find((g) => g.id === id);
+    if (!group) return;
+
+    group.title = title;
+    await chrome.storage.local.set({ savedGroups });
+  }
+
+  /* Sets or clears (groupId: null) which manual group a listing belongs
+     to — moving one listing between groups, not the whole-group dissolve
+     ungroupListings below does. If the listing was already in a
+     different group, and leaving it drops that old group to fewer than 2
+     members, the old group dismantles too (its survivor's own groupId
+     cleared, the now-unused savedGroups entry removed) — a group of one
+     is never really a group. */
+  async function setListingGroup(id, groupId) {
+    const { savedListings, savedGroups } = await readAll();
+    const listing = savedListings.find((l) => l.id === id);
+    if (!listing) return;
+
+    const previousGroupId = listing.groupId ?? null;
+    listing.groupId = groupId ?? null;
+
+    let groups = savedGroups ?? [];
+    if (previousGroupId && previousGroupId !== listing.groupId) {
+      const remainingInOld = savedListings.filter((l) => l.groupId === previousGroupId).length;
+      if (remainingInOld < 2) {
+        for (const l of savedListings) if (l.groupId === previousGroupId) l.groupId = null;
+        groups = groups.filter((g) => g.id !== previousGroupId);
+      }
+    }
+
+    await chrome.storage.local.set({ savedListings, savedGroups: groups });
+  }
+
+  /* Ungroups every listing currently in `groupId` (back to no group) and
+     deletes the now-empty group entry itself — the only action that
+     dissolves a manual group outright, as opposed to setListingGroup
+     moving one listing at a time. */
+  async function ungroupListings(groupId) {
+    const { savedListings, savedGroups } = await readAll();
+    for (const l of savedListings) {
+      if (l.groupId === groupId) l.groupId = null;
+    }
+    await chrome.storage.local.set({
+      savedListings,
+      savedGroups: (savedGroups ?? []).filter((g) => g.id !== groupId),
+    });
+  }
+
+  /* Appends one price observation onto a saved listing's rolling history —
+     used when "Search this exact item" finds real results (see
+     PH.saved.capturePendingPrice and the poll loop in main.js). Shares
+     nextPriceHistory's cap/dedup with bookmark trades and folder totals, so
+     a same-price recheck just refreshes the latest entry's timestamp
+     rather than taking a slot. */
+  async function pushSavedListingPrice(id, entry) {
+    const { savedListings } = await readAll();
+    const listing = savedListings.find((l) => l.id === id);
+    if (!listing) return;
+
+    listing.priceHistory = nextPriceHistory(listing.priceHistory ?? [], entry);
+    await chrome.storage.local.set({ savedListings });
+  }
+
+  /* Refreshes a saved listing's listedAt whenever "Search this exact item"
+     finds real results — see PH.saved.capturePendingPrice, which reads it
+     off the matched row the same visit it captures a price. The original
+     listing you saved may no longer be the cheapest match (relisted,
+     someone else undercut it, time passed), so this keeps "listed X ago"
+     honest rather than leaving it frozen at whatever it was at save time. */
+  async function setListingListedAt(id, listedAt) {
+    const { savedListings } = await readAll();
+    const listing = savedListings.find((l) => l.id === id);
+    if (!listing) return;
+
+    listing.listedAt = listedAt;
+    await chrome.storage.local.set({ savedListings });
+  }
+
+  /* Flags/clears a saved listing as "the last exact search for it found
+     zero results" — see the noResultsFound schema note above. Set by
+     PH.saved.rebuildSearch right after a real, well-formed search (exact
+     name/type + every mod pinned min=max) comes back empty; cleared by
+     that same row's "Cancel" or by deleting the listing outright.
+     Persisted on the listing itself rather than kept as in-memory UI
+     state, specifically so it shows up via the ordinary
+     chrome.storage.onChange -> refresh every tab already reacts to — no
+     need to guess which tab counts as "the" one to prompt in when the
+     results tab the search just opened has its own independent copy of
+     this same row. */
+  async function setListingNoResults(id, value) {
+    const { savedListings } = await readAll();
+    const listing = savedListings.find((l) => l.id === id);
+    if (!listing) return;
+
+    if (value) listing.noResultsFound = true;
+    else delete listing.noResultsFound;
+    await chrome.storage.local.set({ savedListings });
+  }
+
+  /* ------------------------------------------------------- price capture */
+
+  async function setPendingPriceCapture(id) {
+    await chrome.storage.local.set({ pendingPriceCapture: id });
+  }
+
+  async function getPendingPriceCapture() {
+    return (await readAll()).pendingPriceCapture;
+  }
+
+  async function clearPendingPriceCapture() {
+    await chrome.storage.local.set({ pendingPriceCapture: null });
+  }
+
+  /* ------------------------------------------------- search this exact item */
+
+  async function getTradeSearchCooldown() {
+    return (await readAll()).tradeSearchCooldown;
+  }
+
+  async function setTradeSearchCooldown(blockedUntil) {
+    await chrome.storage.local.set({ tradeSearchCooldown: blockedUntil });
   }
 
   /* --------------------------------------------------------------- settings */
@@ -414,8 +651,11 @@ PH.store = (() => {
     getFolders, saveFolder, deleteFolder, toggleFolderArchive, reorderFolders, pushFolderTotalCost,
     clearFolderTotalCost, clearFolderPriceHistory,
     getTrades, saveTrade, replaceTrades, deleteTrade, reorderTrades, pushTradePrice,
-    getLiveSearches, saveLiveSearch, deleteLiveSearch, reorderLiveSearches,
-    getSavedListings, saveSavedListing, deleteSavedListing,
+    getSavedListings, saveSavedListing, deleteSavedListing, deleteSavedListings, pushSavedListingPrice,
+    setListingListedAt, setListingNoResults,
+    getSavedGroups, createSavedGroup, renameSavedGroup, setListingGroup, ungroupListings,
+    setPendingPriceCapture, getPendingPriceCapture, clearPendingPriceCapture,
+    getTradeSearchCooldown, setTradeSearchCooldown,
     noteLeague, getSettings, setSetting, getLastSeenLeagues, onChange,
   };
 })();

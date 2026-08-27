@@ -68,7 +68,17 @@ PH.prices = (() => {
 
   /* Work out which currency a price is in. The visible text is just a number,
      so the currency comes from the icon's filename. Falls back to reading any
-     text label, for layouts where the icon is missing. */
+     text label, for layouts where the icon is missing.
+
+     Only ever returns the two exact strings "chaos"/"divine" for those two
+     — every other currency (Orb of Fusing, Exalted Orb, ...) comes back as
+     its own real display name instead of being forced into one of those
+     two or dropped. There's no fixed rate for these (poe.ninja only feeds
+     this extension a chaos<->divine rate), so callers that need a
+     chaos-equivalent number (sorting, totals, price diffs) treat anything
+     that isn't "chaos"/"divine" as a flat ~1c floor rather than a real
+     conversion — a deliberate approximation, not a guess: see the note
+     above toChaosEquivalent in bookmarks.js/saved.js. */
   function readCurrency(priceEl) {
     const img = priceEl.querySelector('.currency-image img, img');
     const src = img?.getAttribute("src") ?? "";
@@ -85,7 +95,24 @@ PH.prices = (() => {
     const text = priceEl.textContent.toLowerCase();
     if (/\bdiv(ine)?\b/.test(text)) return "divine";
     if (/\bchaos\b/.test(text)) return "chaos";
-    return null;
+
+    /* Any other currency — its display name sits in its own <span> right
+       after the icon, inside .currency-text (verified 2026-08 against a
+       real chaos-priced row's outerHTML: <span class="currency-text
+       currency-image"><img ...><span>Chaos Orb</span></span> — the same
+       wrapper this reuses for e.g. "Orb of Fusing", not independently
+       outerHTML-verified for a non-chaos/divine currency specifically,
+       since the structure is identical either way). */
+    const name = priceEl.querySelector(".currency-text span:last-child")?.textContent.trim();
+    return name || null;
+  }
+
+  /* The icon's own <img src>, straight from GGG's CDN — reused as-is rather
+     than us bundling copies, so Saved listings (which have no live row to
+     re-read later) can still show the right currency icon. */
+  function readCurrencyIcon(priceEl) {
+    const img = priceEl.querySelector('.currency-image img, img');
+    return img?.getAttribute("src") ?? null;
   }
 
   function readAmount(priceEl) {
@@ -99,15 +126,18 @@ PH.prices = (() => {
     return Number.isFinite(value) ? value : null;
   }
 
-  /* { amount, currency } for one row, or null — the one place that knows
-     where a row's price element lives, so annotate/cheapestOnPage/the
-     saved-listing capture button all read it the same way. */
+  /* { amount, currency, icon } for one row, or null — the one place that
+     knows where a row's price element lives, so annotate/cheapestOnPage/the
+     saved-listing capture button all read it the same way. `icon` is best-
+     effort (the currency image's own src) and can be null even when amount
+     and currency aren't. */
   function readRowPrice(row) {
     const priceEl = row.querySelector('[data-field="price"]') ?? row.querySelector(".details .price");
     if (!priceEl) return null;
     const amount = readAmount(priceEl);
     const currency = readCurrency(priceEl);
-    return amount != null && currency ? { amount, currency } : null;
+    const icon = readCurrencyIcon(priceEl);
+    return amount != null && currency ? { amount, currency, icon } : null;
   }
 
   function annotate() {
@@ -123,14 +153,25 @@ PH.prices = (() => {
       const priceEl =
         row.querySelector('[data-field="price"]') ?? row.querySelector(".details .price");
 
+      /* Only chaos and divine have a real rate to convert with — anything
+         else (readCurrency can now return any currency's own name, not
+         just those two) has no conversion to show here, so it's skipped
+         rather than guessed at. That's different from the flat ~1c floor
+         toChaosEquivalent uses elsewhere for exotic currencies: this badge
+         is a direct "here's the value" claim shown right on the trade
+         site next to the real price, not an internal sort/total number —
+         showing a floor here as if it were computed would be misleading
+         in a way it isn't when it's just breaking a sort tie. */
       let text;
       if (currency === "divine") {
         text = `≈ ${Math.round(amount * rate.divineInChaos)}c`;
-      } else {
+      } else if (currency === "chaos") {
         const inDivine = amount / rate.divineInChaos;
         /* Below a tenth of a divine the conversion is noise, not information. */
         if (inDivine < 0.1) continue;
         text = `≈ ${inDivine.toFixed(2)} div`;
+      } else {
+        continue;
       }
 
       priceEl.append(
@@ -141,12 +182,27 @@ PH.prices = (() => {
 
   const currentRate = () => rate;
 
+  /* chaos itself, divine converted via rate (null with no rate loaded), or
+     null for anything else — readCurrency can now return any currency's
+     own name, not just those two, but there's no rate to convert an
+     exotic one with, and unlike the saved-listing math in bookmarks.js/
+     saved.js (which treats one as a deliberate flat ~1c floor for
+     sorting/totals a user is actively curating), this drives *automatic*
+     "what's the cheapest thing on this page" picking — flooring it here
+     risks a cheap-looking exotic-currency listing always winning that
+     comparison over a genuinely cheaper chaos-priced one, which could
+     actively mislead price tracking rather than just show an approximate
+     number. */
+  function chaosEquivalentOf(amount, currency) {
+    if (currency === "chaos") return amount;
+    if (currency === "divine") return rate ? amount * rate.divineInChaos : null;
+    return null;
+  }
+
   /* Reads every visible result row's price and returns the cheapest as
      { amount, currency }, or null if there's nothing comparable on the page.
      Skips bulk-exchange rows — those price currency-to-currency, not
-     item-to-currency, and don't use this same price markup. A divine price
-     only counts if `rate` is loaded, since comparing it to a chaos price
-     needs the exchange rate; we don't guess one. */
+     item-to-currency, and don't use this same price markup. */
   function cheapestOnPage() {
     let best = null;
     let bestChaos = Infinity;
@@ -154,20 +210,43 @@ PH.prices = (() => {
     for (const row of document.querySelectorAll(`${ROW}:not(.exchange)`)) {
       const priced = readRowPrice(row);
       if (!priced) continue;
-      const { amount, currency } = priced;
-
-      let chaosEquivalent;
-      if (currency === "chaos") chaosEquivalent = amount;
-      else if (rate) chaosEquivalent = amount * rate.divineInChaos;
-      else continue;
+      const chaosEquivalent = chaosEquivalentOf(priced.amount, priced.currency);
+      if (chaosEquivalent == null) continue;
 
       if (chaosEquivalent < bestChaos) {
         bestChaos = chaosEquivalent;
-        best = { amount, currency };
+        best = { amount: priced.amount, currency: priced.currency };
       }
     }
 
     return best;
+  }
+
+  /* Same comparison as cheapestOnPage, but returns the row element itself
+     rather than just its price — for callers that need to read something
+     else off that specific row too (PH.saved.capturePendingPrice reads its
+     "listed X ago" text). Kept separate rather than having cheapestOnPage
+     itself return the row: that object flows straight into chrome.storage
+     (PH.store.pushTradePrice/pushSavedListingPrice), and a DOM element
+     isn't serializable — mixing the two would risk a silent storage bug
+     the moment someone spread the wrong return value into a saved entry. */
+  function cheapestRowOnPage() {
+    let bestRow = null;
+    let bestChaos = Infinity;
+
+    for (const row of document.querySelectorAll(`${ROW}:not(.exchange)`)) {
+      const priced = readRowPrice(row);
+      if (!priced) continue;
+      const chaosEquivalent = chaosEquivalentOf(priced.amount, priced.currency);
+      if (chaosEquivalent == null) continue;
+
+      if (chaosEquivalent < bestChaos) {
+        bestChaos = chaosEquivalent;
+        bestRow = row;
+      }
+    }
+
+    return bestRow;
   }
 
   /* --------------------------------------------------- poe.ninja averages --
@@ -238,7 +317,7 @@ PH.prices = (() => {
   }
 
   return {
-    init, annotate, setEnabled, currentRate, cheapestOnPage, readRowPrice,
+    init, annotate, setEnabled, currentRate, cheapestOnPage, cheapestRowOnPage, readRowPrice,
     loadPriceIndex, matchItem,
   };
 })();

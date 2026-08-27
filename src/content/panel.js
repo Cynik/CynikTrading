@@ -16,7 +16,6 @@ PH.panel = (() => {
 
   const TABS = [
     { id: "bookmarks", label: "Bookmarks", glyph: "🗀" },
-    { id: "live", label: "Live searches", glyph: "📡" },
     { id: "saved", label: "Saved", glyph: "🏷" },
   ];
 

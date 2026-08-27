@@ -174,31 +174,6 @@ await PH.store.deleteFolder(fA.id);
 check("folder gone", !(await PH.store.getFolders()).some(f=>f.id===fA.id));
 check("orphan trades cleaned up", (await PH.store.getTrades(fA.id)).length===0);
 
-console.log("\n== live searches ==");
-const l1 = await PH.store.saveLiveSearch({title:"watch1", location:{version:"1",type:"search",slug:"w1"}});
-const l2 = await PH.store.saveLiveSearch({title:"watch2", location:{version:"1",type:"search",slug:"w2"}});
-const l3 = await PH.store.saveLiveSearch({title:"watch-poe2", location:{version:"2",type:"search",slug:"w3"}});
-check("three live searches saved", (await PH.store.getLiveSearches()).length===3);
-check("ids assigned", Boolean(l1.id && l2.id && l3.id));
-check("addedAt defaulted", typeof (await PH.store.getLiveSearches())[0].addedAt==="string");
-
-await PH.store.saveLiveSearch({id:l1.id, title:"renamed"});
-check("rename persisted", (await PH.store.getLiveSearches()).find(s=>s.id===l1.id).title==="renamed");
-
-// Only PoE1 entries are visible in the UI. Swapping them must not move the PoE2 entry.
-await PH.store.reorderLiveSearches([l2.id, l1.id]);
-let liveSearches = await PH.store.getLiveSearches();
-check("visible pair swapped", liveSearches[0].id===l2.id && liveSearches[1].id===l1.id, liveSearches.map(s=>s.title).join(","));
-check("hidden PoE2 entry stayed in slot 2", liveSearches[2].id===l3.id, liveSearches.map(s=>s.title).join(","));
-
-await PH.store.reorderLiveSearches(["not-a-real-id"]); // unknown id -> must be a no-op
-liveSearches = await PH.store.getLiveSearches();
-check("unknown-id reorder is a no-op", liveSearches[0].id===l2.id && liveSearches.length===3);
-
-await PH.store.deleteLiveSearch(l2.id);
-liveSearches = await PH.store.getLiveSearches();
-check("delete removes just that one", liveSearches.length===2 && !liveSearches.some(s=>s.id===l2.id));
-
 console.log("\n== last-seen leagues ==");
 const mk = (slug, league="Allflame") => ({version:"1",type:"search",league,slug});
 await PH.store.noteLeague(PH.location.parsePath("/trade")); // incomplete -> no-op, must not throw
