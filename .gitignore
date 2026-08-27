@@ -6,8 +6,8 @@ desktop.ini
 !.vscode/extensions.json
 
 # Personal / process notes that shouldn't be shared
-CLAUDE.local.md
-CLAUDE.md
+PROJECT_NOTES.local.md
+PROJECT_NOTES.md
 
 # If we ever add a build step
 node_modules/
