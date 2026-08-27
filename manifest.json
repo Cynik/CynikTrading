@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "PoE Trade Helper",
+  "version": "0.3.0",
+  "description": "Bookmark folders, a live-search watchlist, saved trade listings, fuzzy stat search and chaos/divine conversion for the Path of Exile trade site.",
+
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "PoE Trade Helper"
+  },
+
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.pathofexile.com/trade*",
+        "https://pathofexile.com/trade*"
+      ],
+      "js": [
+        "src/content/store.js",
+        "src/content/location.js",
+        "src/content/icons.js",
+        "src/content/ui.js",
+        "src/content/search-panel.js",
+        "src/content/exchange.js",
+        "src/content/panel.js",
+        "src/content/bookmarks.js",
+        "src/content/live-searches.js",
+        "src/content/saved.js",
+        "src/content/prices.js",
+        "src/content/main.js"
+      ],
+      "css": ["src/content/panel.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "permissions": ["storage"],
+
+  "host_permissions": ["https://poe.ninja/*"],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["src/assets/icons/bookmark-folder/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# Personal notes that shouldn't be shared
+CLAUDE.local.md
+
+# If we ever add a build step
+node_modules/
+dist/
