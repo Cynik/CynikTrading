@@ -38,10 +38,14 @@ PH.ui = (() => {
       onclick: opts.onClick,
     }, glyph);
 
-  /* A dropdown menu hung off a "…" button. One open at a time. */
-  function menu(items) {
+  /* A dropdown menu hung off a "…" button by default. One open at a time.
+     `trigger`, if given, replaces that default "···" icon button — e.g.
+     a labeled "🔖 Bookmark" button — while everything else (open/close,
+     outside-click, item rendering) stays identical either way. Every
+     existing call site omits it and keeps the original "···" trigger. */
+  function menu(items, { trigger: customTrigger } = {}) {
     const wrap = el("div", { class: "ph-menu-wrap" });
-    const trigger = iconButton("···", { title: "More", class: "ph-menu-trigger" });
+    const trigger = customTrigger ?? iconButton("···", { title: "More", class: "ph-menu-trigger" });
     const list = el("div", { class: "ph-menu" });
 
     for (const item of items) {
@@ -284,8 +288,65 @@ PH.ui = (() => {
     return svg;
   }
 
+  /* ----------------------------------------------------------------------
+     A handful of small line icons for icon-only buttons (see iconButton
+     above) — plain geometric shapes (a circle+handle for search, curved
+     arrows for refresh, a can with a lid for trash, a notched rectangle
+     for a bookmark ribbon), not traced from any specific icon font or
+     library, so there's nothing to license here beyond drawing the
+     obvious shape for each concept. stroke="currentColor" so every icon
+     inherits whatever color its own button already has (its own state —
+     hover, danger, ...) rather than carrying a fixed color of its own the
+     way an emoji glyph does, which was the actual complaint that replaced
+     emoji here: mismatched, uncontrollable colors and blurry rendering.
+     icon() always returns a brand new <svg> node, never a shared one,
+     since the same icon is often needed in several rows/buttons at once
+     and one DOM node can only live in one place.
+     ---------------------------------------------------------------------- */
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function svgNode(tag, attrs) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    return node;
+  }
+  const ICON_SHAPES = {
+    /* Two opposing arcs, each with its own small corner arrowhead — closer
+       to the classic two-arrow "sync" icon per a direct visual reference,
+       rather than the single-arc version this started as. */
+    refresh: () => [
+      svgNode("path", { d: "M4 10a8 8 0 0 1 14.5-4.5" }),
+      svgNode("path", { d: "M20 4v6h-6" }),
+      svgNode("path", { d: "M20 14a8 8 0 0 1-14.5 4.5" }),
+      svgNode("path", { d: "M4 20v-6h6" }),
+    ],
+    search: () => [
+      svgNode("circle", { cx: "10", cy: "10", r: "7" }),
+      svgNode("line", { x1: "21", y1: "21", x2: "15.5", y2: "15.5" }),
+    ],
+    bookmark: () => [
+      svgNode("path", { d: "M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" }),
+    ],
+    trash: () => [
+      svgNode("path", { d: "M4 7h16" }),
+      svgNode("path", { d: "M6 7v13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7" }),
+      svgNode("path", { d: "M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" }),
+      svgNode("line", { x1: "10", y1: "11", x2: "10", y2: "17" }),
+      svgNode("line", { x1: "14", y1: "11", x2: "14", y2: "17" }),
+    ],
+  };
+  function icon(name) {
+    const svg = svgNode("svg", {
+      viewBox: "0 0 24 24", width: "14", height: "14",
+      fill: "none", stroke: "currentColor", "stroke-width": "2",
+      "stroke-linecap": "round", "stroke-linejoin": "round",
+      class: "ph-icon-svg",
+    });
+    (ICON_SHAPES[name]?.() ?? []).forEach((child) => svg.append(child));
+    return svg;
+  }
+
   return {
     el, button, iconButton, menu, inlineForm, confirmRow, toast, empty, timeAgo, makeSortable, formatPrice,
-    hoverPopup, closeHoverPopup, sparklineSvg,
+    hoverPopup, closeHoverPopup, sparklineSvg, icon,
   };
 })();

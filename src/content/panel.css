@@ -60,10 +60,11 @@ body.ph-active:not(.ph-collapsed) #trade {
    margin is deliberately left alone: GGG's own CSS already centers it
    (fixed max-width: 1520px, margin: 0 auto — verified 2026-08 via DevTools
    computed styles) inside whatever width #trade has. On an ultrawide
-   monitor that leaves real space on both sides of the filters — but
-   evenly, which is what was actually asked for, not a smaller #trade with
-   a second dead zone of its own after it. A capped-#trade version of this
-   was tried and reverted; see CLAUDE.local.md for why. */
+   monitor that leaves real space evenly on both sides of the filters,
+   rather than a smaller #trade with a second dead zone of its own after
+   it — a capped-#trade version of this was tried and reverted, since
+   capping #trade's own width just relocates the dead zone instead of
+   removing it. */
 
 /* Better Trading hits this same problem and fixes it the same way (see
    _search-panel.scss at github.com/exile-center/better-trading): narrowing
@@ -235,16 +236,25 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 .ph-btn-disabled:hover { border-color: var(--ph-line); background: var(--ph-surface-2); }
 
 .ph-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--ph-line);
   background: var(--ph-surface-2);
   color: var(--ph-ink);
   font: inherit;
   font-size: 13px;
-  padding: 2px 6px;
+  padding: 5px 8px;
   cursor: pointer;
   border-radius: 3px;
 }
 .ph-icon-btn:hover { color: var(--ph-gold); border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+
+/* An icon SVG (see PH.ui.icon) sitting inside an .ph-icon-btn — inherits
+   the button's own color via stroke="currentColor" (set on the <svg>
+   itself), so hover/danger states recolor it the same way they'd
+   recolor text, unlike the fixed-color emoji glyphs this replaced. */
+.ph-icon-svg { display: block; flex: 0 0 auto; }
 
 #ph-panel button:focus-visible,
 #ph-panel a:focus-visible,
@@ -255,6 +265,14 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 }
 
 .ph-toolbar { display: flex; flex-direction: column; gap: 6px; }
+
+/* A single row of icon-only buttons — replaced four stacked full-width
+   labeled buttons (each eating a quarter of the card's own height) per a
+   direct complaint; the tooltip on each icon carries the same
+   explanation the label used to. */
+.ph-toolbar-icons { flex-direction: row; justify-content: center; }
+.ph-icon-btn-danger { color: var(--ph-danger); border-color: var(--ph-danger); }
+.ph-icon-btn-danger:hover { background: var(--ph-danger); color: var(--ph-surface); }
 .ph-toolbar-row { display: flex; gap: 6px; }
 /* flex-basis 0 (not auto) so every button in a row ends up the same final
    width regardless of label length, rather than just growing by the same
@@ -303,7 +321,12 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 
 .ph-hover-popup {
   position: fixed;
-  z-index: 1003;
+  /* Above .ph-compare-backdrop's own 2000 — appended straight to
+     document.body (see PH.ui.hoverPopup), not nested inside the compare
+     modal, so it needs a higher stacking context than the modal itself
+     to actually show up while hovering a mod inside it, rather than
+     rendering invisibly behind it. */
+  z-index: 2100;
   min-width: 180px;
   padding: 8px 10px;
   border: 1px solid var(--ph-gold-dim);
@@ -730,6 +753,19 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 .ph-saved-row.ph-dragging { opacity: 0.4; }
 .ph-saved-row { cursor: grab; }
 
+/* Briefly marks the listing focusListingOnNextPaint (saved.js) just
+   scrolled to — e.g. right after "Search this exact item" flags one as
+   no longer available, so the confirm prompt doesn't get lost somewhere
+   down a long list. Fades out on its own; the class is removed by the
+   same timer that started the animation, not left to just sit at 0
+   opacity forever if something else re-renders this row in the meantime. */
+.ph-saved-row-focus { animation: ph-saved-row-focus-flash 1.6s ease-out; }
+@keyframes ph-saved-row-focus-flash {
+  0% { box-shadow: 0 0 0 2px var(--ph-gold); }
+  70% { box-shadow: 0 0 0 2px var(--ph-gold); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
 /* A listing or group-head currently being dragged over as a drop target
    (see wireGroupDrag) — a gold outline reads as "drop here" without
    needing to also shift layout the way a border would. */
@@ -807,9 +843,12 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   text-transform: uppercase;
   color: var(--ph-ink);
 }
-.ph-saved-group-count {
+/* Was a plain count badge; now the button that opens the compare modal
+   (see openCompareModal in saved.js) — same pill shape and size as the
+   badge it replaced, just clickable. */
+.ph-saved-group-compare {
   flex: 0 0 auto;
-  padding: 1px 6px;
+  padding: 1px 8px;
   border: 1px solid var(--ph-line);
   border-radius: 8px;
   background: var(--ph-surface);
@@ -818,27 +857,493 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   font-weight: 700;
   text-transform: none;
   letter-spacing: normal;
+  white-space: nowrap;
+  cursor: pointer;
 }
-/* Room for more than the sort button here later — see the note above
-   groupRow's own sortBtn. */
+.ph-saved-group-compare:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); color: var(--ph-gold); }
+
 .ph-saved-group-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+
+/* ---- compare modal ---- */
+
+.ph-compare-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.ph-compare-modal {
+  display: flex;
+  flex-direction: column;
+  max-width: 90vw;
+  max-height: 85vh;
+  background: var(--ph-surface);
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.ph-compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: linear-gradient(var(--ph-surface-3), var(--ph-surface-2));
+  border-bottom: 1px solid var(--ph-line);
+}
+.ph-compare-heading {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ph-gold);
+}
+
+/* A 2-row grid — one column per compared listing, row 1 its header, row
+   2 its own mods (see openCompareModal's renderTable in saved.js, which
+   appends header+mods as flat siblings, not wrapped in a per-column div;
+   grid-auto-flow: column fills row 1 then row 2 for each listing in turn
+   before moving to the next). This shape resolves a tension between two
+   distinct problems, worth keeping straight:
+
+     1. An earlier version was a real spreadsheet grid keyed by *mod*
+        (one shared row per distinct modifier, every column getting a
+        cell whether or not it had that mod) — two items sharing only a
+        few mods produced a grid mostly full of "—" placeholder cells,
+        more gaps than useful alignment. Fixed by dropping row-per-mod
+        entirely: each column just lists its own mods, independently,
+        with a shared-mod signal (.ph-compare-mod-dim's dulled green text
+        for an identical value everywhere, .ph-compare-mod-star plus
+        .ph-compare-mod-glow for the highest of several differing ones)
+        standing in for what
+        row-alignment used to signal.
+     2. That fix's own side effect: with every column now free to be a
+        different height, the *property block* above the mods also ended
+        at a different height in each one (some listings just have more
+        Item Level/Requires/defense lines than others), so the mods
+        themselves started at visibly different depths — a real,
+        screenshotted misalignment, but a different one than #1's gaps.
+
+   This 3-row grid fixes #2 without undoing #1: a CSS grid row sizes
+   itself to its tallest cell regardless of the others' content, so row 1
+   stretches every header to the same height (property blocks now end at
+   a consistent boundary) and row 2 does the same for the mods area as a
+   whole — but a shorter column's mods cell just gets blank space at its
+   own bottom, never a placeholder inserted *between* two of its real mod
+   lines, which is what actually made #1's grid read as gap-riddled. Row 3
+   is just the Find Item button (see .ph-compare-col-footer), landing at
+   the same height under every column for the same reason row 1 does. */
+.ph-compare-table {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: auto auto auto;
+  /* Widened from 300px to make room for .ph-compare-mod-star's own space
+     (icon width + the row's existing gap) without shrinking the mod-name
+     or range columns to fit it — per an explicit ask, the new icon
+     shouldn't cost the text/range columns any of their existing room. */
+  grid-auto-columns: 320px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--ph-line);
+  border-radius: 4px;
+}
+
+/* Vertical divider between columns — applied to a column's header, mods,
+   and footer cells alike (not a shared wrapper, since there isn't one any
+   more) so the line still reads as continuous down the full column
+   height; dropped from the final column's own trio via the sibling count
+   below rather than a :last-child that would only catch one of the three
+   cells that need it removed. */
+.ph-compare-col-header, .ph-compare-mods-cell, .ph-compare-col-footer { border-right: 1px solid var(--ph-line); }
+.ph-compare-table > *:nth-last-child(-n+3) { border-right: none; }
+
+/* The whole-column border for compareColumnBorder's own two outcomes
+   (saved.js) — a single listing with the most total "stars" (its own
+   mods' green stars plus one more if it's also the cheapest) gets green;
+   if that same listing IS the cheapest one, gold instead. Applied to all
+   three of a column's own cells (header/mods/footer — see renderTable)
+   since there's no wrapper div around a column to put one border on
+   directly (see the note above .ph-compare-table for why not); each rule
+   below overrides that cell's own border-right outright via the 2-class
+   selector's higher specificity, then only draws the *outer* edge of the
+   trio — left/right on all three, top only on the header, bottom only on
+   the footer — so the three cells still read as one continuous box
+   rather than each getting its own fully separate outline. The header's
+   own border-bottom (the ordinary gold-dim divider every column's header
+   has, separating properties from mods) is deliberately left alone
+   rather than overridden here — an earlier version cleared it to `none`
+   on the theory that a boxed column doesn't need it too, which instead
+   read as a real inconsistency (a real screenshot showed the highlighted
+   column missing the divider every other column still had, not "cleaner
+   without it"). */
+.ph-compare-col-header.ph-compare-col-green,
+.ph-compare-mods-cell.ph-compare-col-green,
+.ph-compare-col-footer.ph-compare-col-green {
+  border-left: 2px solid #7fd88f;
+  border-right: 2px solid #7fd88f;
+}
+.ph-compare-col-header.ph-compare-col-green { border-top: 2px solid #7fd88f; }
+.ph-compare-col-footer.ph-compare-col-green { border-bottom: 2px solid #7fd88f; }
+
+/* Same shape as the green case above, but gold and "shiny" — a soft glow
+   via box-shadow rather than just a brighter border, so the one column
+   that's both cheapest and highest-scoring is unmistakably a step above
+   a plain green win, not just a different color of the same thing. */
+.ph-compare-col-header.ph-compare-col-gold,
+.ph-compare-mods-cell.ph-compare-col-gold,
+.ph-compare-col-footer.ph-compare-col-gold {
+  border-left: 2px solid var(--ph-gold);
+  border-right: 2px solid var(--ph-gold);
+  box-shadow: 0 0 8px rgba(212, 175, 90, 0.45);
+}
+.ph-compare-col-header.ph-compare-col-gold { border-top: 2px solid var(--ph-gold); }
+.ph-compare-col-footer.ph-compare-col-gold { border-bottom: 2px solid var(--ph-gold); }
+
+/* The cheapest listing's own marker inside its price pill (see
+   cheapestListingIds/renderTable) — same green as the mod-level star
+   (.ph-compare-mod-star) and the column border above, so all three read
+   as one family of "notable" signals. */
+.ph-compare-price-star {
+  color: #7fd88f;
+  font-size: 10px;
+}
+
+/* The Find Item/Bookmark buttons' own row — same actions a saved
+   listing's own toolbar has (see rebuildSearch/bookmarkButton in
+   saved.js), just reachable per-column from inside the compare modal
+   too. flex-wrap since two buttons plus a folder-menu trigger can run
+   wider than a narrow column comfortably fits on one line. */
+.ph-compare-col-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+}
+
+/* The header — icon/title/price/properties. Sticky so it stays visible
+   while scrolling down through a tall column of mods, like a
+   spreadsheet's frozen header row, set apart with its own background and
+   a heavier bottom border instead of the thin per-line borders below.
+   No explicit height — the grid row's own stretch (default align-items)
+   is what makes every header in row 1 match the tallest one, so a short
+   header's own border-bottom still lands at the row's real boundary
+   rather than wherever its own content happens to end. */
+.ph-compare-col-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--ph-surface-2);
+}
+/* Same gold-gradient fade as .ph-item-divider, not a flat border-bottom —
+   a plain solid line here read as a different, cheaper-looking divider
+   than the one right below it separating implicit from explicit mods.
+   A pseudo-element rather than border-bottom so it can fade at the edges;
+   position: absolute keeps it from adding to the header's own layout
+   height (the header is already position: sticky, so it's already a
+   positioning context for this). */
+.ph-compare-col-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(to right, transparent, var(--ph-gold-dim) 20%, var(--ph-gold-dim) 80%, transparent);
+}
+
+/* Removes this listing from Saved entirely — see removeFromCompare in
+   saved.js. Absolutely positioned over the header's own top-right
+   corner (the header's own `position: sticky` is enough of a positioning
+   context for that) rather than taking a row of its own, the same way
+   the whole modal's own close button sits in its head; small and
+   low-contrast until hovered so it doesn't compete with the icon/title
+   for attention. */
+.ph-compare-remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ph-muted);
+  background: transparent;
+  border-color: transparent;
+}
+.ph-compare-remove-btn:hover {
+  color: var(--ph-ink);
+  background: var(--ph-danger);
+  border-color: var(--ph-danger);
+}
+
+.ph-compare-icon {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--ph-surface);
+}
+/* Wraps onto multiple lines rather than truncating — GGG's own item
+   popup wraps a long name/type too (confirmed live), and unlike a mod
+   line (see .ph-compare-mod-text, which stays single-line so the column
+   doesn't grow tall just from one long stat) there's only ever one title
+   per column, so letting it take the extra line costs nothing. The
+   column's own fixed width (see .ph-compare-column) is what keeps this
+   from stretching the layout, not truncation. */
+.ph-compare-title {
+  max-width: 100%;
+  font-weight: 600;
+  font-size: 12.5px;
+  text-align: center;
+}
+/* Icon + amount, same pairing .ph-saved-price already uses on the card
+   itself (reuses its .ph-saved-price-icon) — a bare amount+currency-name
+   pill (no icon) read as an odd one-off next to every other price badge
+   in the panel, especially for a longer currency name like "Orb of
+   Alchemy" with nothing to visually anchor it. */
+.ph-compare-price {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 3px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ph-gold);
+  white-space: nowrap;
+}
+
+
+/* One of a listing's own mod lines — mirroring GGG's own compact
+   tier-code-then-text layout (confirmed live against a real item's own
+   popup) instead of a code/tag stacked on its own line below the text.
+   Only the mods a listing actually has get a line — nothing renders for
+   ones it doesn't, so columns naturally end up different heights. */
+.ph-compare-cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--ph-line);
+}
+/* The last mod in a group (e.g. the implicit) sits directly above the
+   gold-gradient .ph-item-divider groupedModNodes inserts between groups —
+   without this, that cell's own plain border-bottom above still shows too,
+   reading as a second, dimmer line right on top of the real divider.
+   Each group is wrapped in its own .ph-item-mod-group div (see
+   groupedModNodes in saved.js), so the cell itself is never a direct
+   sibling of the divider — only its wrapper is — hence targeting the
+   wrapper's :has(+ .ph-item-divider) and reaching in for its own last
+   cell, rather than trying to select the cell directly. */
+.ph-item-mod-group:has(+ .ph-item-divider) .ph-compare-cell:last-child {
+  border-bottom: none;
+}
+
+/* Rule B of compareModCell's two EXPLICIT-mod-only comparison treatments
+   (see the note there for both, and .ph-compare-mod-dim below for rule
+   A) — the highest value of a mod that's shared but genuinely varies:
+   "this one rolled best." A star glyph AND a bright text-shadow glow
+   together — the more noteworthy of the two rules, so it gets the
+   stronger, two-part treatment, unlike rule A's own single, deliberately
+   muted signal (see the note below). Green (#7fd88f, the same shade
+   already verified against GGG's own item-popup color for special
+   properties — see .ph-item-properties-special) rather than gold — gold
+   stays reserved for "actively sorted by this column" elsewhere in the
+   modal (.ph-compare-mod-active). This mechanism went through several
+   earlier shapes before landing here — lighting up every column merely
+   sharing a mod, then every column tied for the max regardless of kind,
+   then a border, then a glow, then swapped with rule A and back — see
+   modUniformValues/modBestValues/compareModCell in saved.js for the full
+   history. */
+.ph-compare-mod-star {
+  flex: 0 0 auto;
+  color: #7fd88f;
+  font-size: 11px;
+  cursor: default;
+}
+/* A single, moderate-radius, near-opaque layer rather than the original
+   doubled 6px solid glow (obscured the text) — went through 3px/0.75
+   (too faint) and 4px/0.85 (still too faint per a second follow-up) to
+   land here, a bit stronger than either but still well short of the
+   original's full-opacity double layer. */
+.ph-compare-mod-glow {
+  text-shadow: 0 0 5px rgba(127, 216, 143, 0.95);
+}
+
+/* Rule A — a mod present, at the exact same value, on literally every
+   compared column: "identical everywhere, nothing to compare." Just a
+   dulled green text color, no glow and no star, deliberately the
+   quietest of this modal's green signals per an explicit ask — an
+   identical shared mod is the common case in a real compare, and giving
+   it a glow or star competed for attention with rule B's own, more
+   noteworthy signal above. A muted, desaturated green rather than the
+   bright #7fd88f used everywhere else in this family, so it still reads
+   as "notable, in the same color family" without shouting as loud.
+   Targets .ph-compare-mod-text directly rather than relying on
+   inheritance from the cell — that span already sets its own `color`
+   (var(--ph-ink)), which wins over an inherited value regardless of the
+   ancestor rule's specificity, so setting this on the cell alone would
+   have silently done nothing. */
+.ph-compare-mod-dim .ph-compare-mod-text {
+  color: #7fa88a;
+}
+
+/* GGG's own compact code (e.g. "P1", "S4", or a compound "P2 + P1" — see
+   parseModAffix), colored by affix type so prefix vs suffix reads at a
+   glance across the whole grid, not just from the code text itself —
+   picked to not collide with any .ph-rarity-* color already in use
+   elsewhere in the panel. Replaces the separate "PREFIX"/"SUFFIX"/
+   "TIER N" tags an earlier version of this stacked on their own line —
+   same information (the code already says both which one and the tier),
+   one short label instead of three. */
+.ph-compare-mod-code {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ph-compare-mod-code-prefix { color: #7ec8e3; }
+.ph-compare-mod-code-suffix { color: #e37e9e; }
+
+/* Wraps rather than truncating — an earlier ellipsis-truncated version
+   cut off exactly the text that matters most for actually comparing two
+   items (a real screenshot showed "While a Unique Enemy is in ..." with
+   no way to see the rest short of hovering each line one at a time).
+   Each mod already gets its own line (see groupedModNodes) with nothing
+   else sharing horizontal space with it, so there's no row-alignment
+   cost to letting a long one wrap onto a second line the way there would
+   have been under the old row-per-mod grid. */
+.ph-compare-mod-text {
+  flex: 1 1 auto;
+  color: var(--ph-ink);
+  font-size: 11px;
+}
+
+/* A mod's own "(min-max)" range (see modRangeNode in saved.js) — a fixed
+   width and right-aligned so every mod line's range lands in the same
+   visual column regardless of how long that line's own text is, rather
+   than trailing immediately after wherever the text happens to end (a
+   direct ask, after an earlier version just appended it inline). Always
+   present (even empty) so the column itself stays reserved consistently
+   down the whole list. */
+.ph-compare-mod-range {
+  flex: 0 0 56px;
+  text-align: right;
+  color: var(--ph-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ph-compare-mod-range:not(:empty):hover { color: var(--ph-gold); cursor: default; }
+/* A real implicit in a light grey (per an explicit correction — not blue,
+   which read too close to the prefix/suffix code colors), the dimmed
+   "total"/pseudo summary lines (no tier code of their own; see the note
+   above orderModsForDisplay on where these sort to) in a *darker* grey
+   still, so the two stay visually distinct from each other as well as
+   from a plain explicit's full-brightness text. */
+.ph-compare-mod-text-implicit { color: #c5c8ce; }
+.ph-compare-mod-text-pseudo { color: var(--ph-muted); }
+
+/* Centers an implicit mod's own TEXT on the row (per an explicit ask,
+   corrected once actually seen live — see below), while the range badge
+   still trails after it on the right, same as every other mod line.
+   .ph-compare-mod-range's own fixed 56px width (kept for every other row
+   so a real scannable column of ranges lines up) is dropped here so it
+   doesn't force lopsided centering math.
+
+   An earlier version centered the text+badge pair as a single unit via
+   justify-content: center — mathematically centered, but the badge's own
+   width pulled the *text itself* visibly left of true center once seen
+   live, which read as "not actually centered." Fixed by mirroring the
+   real range badge with an identical, invisible span on the opposite
+   side of the text (modRangeMirrorNode in saved.js) instead: two equal-
+   width flanks around a flex-grow text span put the text on the row's
+   true center regardless of how wide the real badge ends up being, with
+   no justify-content needed at all. */
+.ph-mod-implicit .ph-compare-mod-text {
+  flex: 1 1 auto;
+  text-align: center;
+}
+.ph-mod-implicit .ph-compare-mod-range {
+  flex: 0 0 auto;
+  text-align: left;
+}
+.ph-compare-mod-range-mirror {
+  visibility: hidden;
+}
+
+/* A bench-crafted mod's own distinct color — PoE's well-known UI
+   convention (a cyan-leaning blue, clearly separate from implicit's
+   grey and a plain explicit's default ink), per a direct correction that
+   grouping it with pseudo mods was wrong. Not pixel-verified against a
+   real screenshot the way implicit/pseudo's colors were — worth
+   adjusting once actually seen live. */
+.ph-compare-mod-text-crafted { color: #8bd3e0; }
+
+/* A mod with a real rolled value (see modValueFor in saved.js) doubles as
+   a sort control — click to reorder every column by that same stat.
+   Plain-text mods (no stat id, or a flag mod with nothing to sort by)
+   and empty "—" cells stay inert, no hover/cursor change. */
+.ph-compare-cell.ph-compare-mod-clickable { cursor: pointer; }
+.ph-compare-cell.ph-compare-mod-clickable:hover .ph-compare-mod-text { color: var(--ph-gold); text-decoration: underline; }
+.ph-compare-cell.ph-compare-mod-active .ph-compare-mod-text { color: var(--ph-gold); font-weight: 700; }
+
+/* Same click-to-sort treatment as a mod cell (see comparePropertyCell in
+   saved.js) — a property cell has no nested .ph-compare-mod-text span to
+   target the way a mod cell does (its own text sits directly on
+   .ph-item-property-line), so these apply straight to the cell itself. */
+.ph-compare-property-cell.ph-compare-mod-clickable { cursor: pointer; }
+.ph-compare-property-cell.ph-compare-mod-clickable:hover { color: var(--ph-gold); text-decoration: underline; }
+.ph-compare-property-cell.ph-compare-mod-active { color: var(--ph-gold); font-weight: 700; }
+
+/* A plain two-tone bar, not a number — how close to the best possible
+   roll this landed, at a glance; the exact value/range is in the native
+   title tooltip instead of cluttering the row with more text. Inline at
+   the end of the row now, not a second line under it. */
+/* Now only ever shown inside a hover popup (see wireModRangeHover in
+   saved.js), not inline in the mod row — the row itself just carries the
+   compact "(min-max)" text; hovering that text is what surfaces this bar
+   plus the plain percentage line next to it. display: block (rather than
+   a bare span's default inline) so it lays out as its own line inside
+   the popup, the same way PH.ui.sparklineSvg does for the same reason. */
+.ph-compare-mod-bar {
+  display: block;
+  position: relative;
+  width: 60px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ph-surface-3);
+  overflow: hidden;
+}
+.ph-compare-mod-bar-fill { position: absolute; inset: 0 auto 0 0; height: 100%; background: var(--ph-gold); }
 
 .ph-saved-group-members { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .ph-saved-group-members .ph-saved-row { background: var(--ph-surface-2); }
 
-/* The standing "drag here to remove from a group" target — see
-   ungroupedDropZone in saved.js. Dashed border and muted styling mark it
-   as a utility zone, not a real group card. */
-.ph-saved-ungroup-zone {
-  border: 1px dashed var(--ph-line);
-  border-radius: 4px;
-  padding: 8px;
-  text-align: center;
-  color: var(--ph-muted);
-  font-size: 11px;
-  font-style: italic;
-}
-.ph-saved-ungroup-zone.ph-drop-target { border-style: solid; color: var(--ph-ink); }
+/* Dragging a grouped listing out into open space anywhere on the page
+   (not onto another row — see wireDocumentUngroupDrop in saved.js)
+   ungroups it, replacing an earlier dedicated "drag here to remove from
+   a group" zone that wasn't working reliably. No dedicated highlight for
+   this case (unlike ph-drop-target on a row) — "anywhere that isn't a
+   row" spans well outside the list's own visible bounds, so there's no
+   single element to highlight; the cursor switching from "no-drop" to a
+   normal move cursor is the feedback. */
 
 /* The item's own artwork, captured at save time (see .icon img in
    saved.js) — a plain icon, not the full rarity/frame background some
@@ -876,6 +1381,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: center;
   font-weight: 600;
   font-size: 12.5px;
   color: var(--ph-link);
@@ -908,17 +1414,107 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 
 .ph-saved-price-icon { width: 15px; height: 15px; object-fit: contain; }
 
-.ph-saved-meta { color: var(--ph-muted); font-size: 10.5px; }
+/* Centered to match the class line and property block right below it
+   (.ph-item-class-line/.ph-item-properties are both centered) — left
+   over from before those existed, when nothing else on the card was
+   centered either, and never updated to match once they were added. */
+.ph-saved-meta { color: var(--ph-muted); font-size: 10.5px; text-align: center; }
 
-.ph-saved-mods {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--ph-ink);
-  font-size: 11.5px;
-  line-height: 1.5;
+/* Item Level/Requires Level/Quality/... (see itemProperties in saved.js)
+   — plain gray lines, centered like GGG's own item popup shows them,
+   above the mods list rather than mixed in with it. */
+.ph-item-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--ph-muted);
+  font-size: 10.5px;
+  text-align: center;
 }
 
-/* Shown in place of .ph-saved-mods — an unidentified item has nothing
+/* Matches GGG's own item popup coloring for these two groups (per a
+   direct side-by-side comparison against a real screenshot) — special
+   is Intangibility-only today (see SPECIAL_PROPERTIES in saved.js), so
+   its green applies there; enchant gets the same blue GGG uses for
+   enchant mods. Set on the group wrapper, not each line, and inherited
+   down — a line still switches to gold while actively sorted (see
+   .ph-compare-mod-active), since that rule targets the line itself
+   directly and wins over an inherited color. */
+.ph-item-properties-special { color: #7fd88f; }
+.ph-item-properties-enchant { color: #8888ff; }
+
+/* A weapon's own handedness+type line ("Two Handed Axe", ...) — see
+   itemClassText in saved.js — directly under the title, matching GGG's
+   own placement, and set apart from .ph-item-properties (slightly larger,
+   less muted) since it's describing the item itself, not one of its
+   stats. */
+.ph-item-class-line {
+  text-align: center;
+  color: var(--ph-ink);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* GGG's own <hr class="item-popup__separator"> between an item's
+   sections (verified 2026-08 against a real popup's outerHTML) — a
+   plain <hr>, restyled as a thin line that fades out at both edges
+   rather than the browser's default inset groove, so it reads as part
+   of the item card instead of a generic form divider.
+
+   Gold-tinted (var(--ph-gold-dim), the same accent .ph-compare-col-header
+   uses for its own section boundary) and 2px rather than plain gray —
+   the compare modal's own mod rows each already carry their own plain
+   var(--ph-line) border-bottom (see .ph-compare-cell), so a same-color
+   divider here read as just another row line instead of the boundary
+   between implicit and explicit mods it's actually meant to be. */
+.ph-item-divider {
+  margin: 2px 0;
+  border: none;
+  height: 2px;
+  background: linear-gradient(to right, transparent, var(--ph-gold-dim) 20%, var(--ph-gold-dim) 80%, transparent);
+}
+
+/* The lighter touch GGG uses *within* the property block itself (Item
+   Level/Requires Level, then Quality/defenses, then the Base Percentile/
+   DPS summary line — see itemPropertyBlocks in saved.js), as opposed to
+   .ph-item-divider's more prominent line between the property block and
+   the mods, or between implicit and explicit mods — shorter and dimmer
+   rather than full-width, per an explicit ask to keep this one small. */
+.ph-item-divider-small {
+  margin: 3px auto;
+  border: none;
+  width: 40%;
+  height: 1px;
+  background: var(--ph-line);
+  opacity: 0.6;
+}
+
+.ph-item-mods {
+  display: flex;
+  flex-direction: column;
+}
+.ph-item-mod-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Reuses .ph-compare-mod-code/-text from the compare modal for the same
+   tier-code-then-text look and prefix/suffix/implicit/pseudo coloring —
+   both wrap rather than truncate, see the note above .ph-compare-mod-text.
+   align-items: center, not baseline — matches .ph-compare-cell, which
+   already uses center. A single-line mod looks identical either way, but
+   a wrapped two-line implicit (long "with Attack Skills"-style text) only
+   centers its range badge against the whole block under center; baseline
+   pins the badge to the first line's own baseline instead, leaving it
+   looking misaligned against the second line below it. */
+.ph-item-mod-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+}
+
+/* Shown in place of the mods list — an unidentified item has nothing
    rolled yet to list. Red text + border to match the trade site's own
    "Unidentified" styling on the item itself (var(--colour-unmet) there). */
 .ph-saved-unidentified {
@@ -927,6 +1523,32 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   border: 1px solid var(--ph-danger);
   border-radius: 8px;
   font-size: 10.5px;
+  color: var(--ph-danger);
+}
+
+/* .ph-compare-col-header centers its children (align-items: center) — the
+   flex-start above is only correct in .ph-saved-body's own column layout
+   (default align-items: stretch, which would otherwise stretch this pill
+   full-width), and was wrongly winning inside the compare header too,
+   pinning the badge to the left edge instead of the centered column
+   everything else in that header uses. */
+.ph-compare-col-header .ph-saved-unidentified {
+  align-self: center;
+}
+
+/* A corrupted item is a critical identifier, so it gets its own line
+   rather than folding into the unidentified pill's styling — matches the
+   trade site's own item popup treatment: centered, set apart by rules
+   above/below, in the same danger red used for Unidentified. */
+.ph-saved-corrupted {
+  align-self: center;
+  width: 100%;
+  padding: 3px 0;
+  border-top: 1px solid var(--ph-danger);
+  border-bottom: 1px solid var(--ph-danger);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--ph-danger);
 }
 

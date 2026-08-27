@@ -150,8 +150,8 @@ PH.bookmarks = (() => {
        storage read instead of twenty" property intact even with Total Cost
        visible everywhere. It can go stale between opens (a price change
        elsewhere doesn't retroactively update a folder you haven't opened
-       since), which is the deliberate trade-off the developer asked for over
-       always reading every folder's trades up front. */
+       since) — a deliberate trade-off in favor of that read-count property,
+       over always reading every folder's trades up front. */
     const totalHistory = folder.totalCostHistory ?? [];
     const { badge: totalBadge, trendBadge: totalTrendBadge } = priceTrendUI(totalHistory, {
       badgeClass: "ph-folder-total",
@@ -368,11 +368,11 @@ PH.bookmarks = (() => {
       priceGroup.classList.add("ph-trade-price-drop");
     }
 
-    /* Only attempted alongside priceBadge — see the "when available" framing
-       this was asked for. Best-effort name match against poe.ninja's data;
-       PoE1 only (PH.prices' index may already be loaded from a PoE1 folder
-       rendered earlier this session, so this game check has to happen here
-       too, not just before loading it in renderTrades). */
+    /* Only attempted alongside priceBadge, shown when a match is available.
+       Best-effort name match against poe.ninja's data; PoE1 only (PH.prices'
+       index may already be loaded from a previously-rendered PoE1 folder, so
+       this game check has to happen here too, not just before loading it in
+       renderTrades). */
     const isPoe1 = (folder.version ?? "1") === "1";
     const ninja = isPoe1 && latest ? PH.prices.matchItem(trade.title) : null;
     const avgBadge = ninja

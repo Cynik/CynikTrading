@@ -37,10 +37,45 @@
                     treating it as a 1-entry history.
      savedListings [ { id, savedAt, listedAt, league, location, sourceId,
                        title, name, type, icon, rarity, unidentified,
-                       price, priceIcon, seller, mods, priceHistory?,
-                       groupId? } ]
-                    groupId, when set, references a savedGroups entry
-                    (below) — set by dragging one listing onto another,
+                       corrupted, price, priceIcon, seller, mods, properties,
+                       additionalStats, priceHistory?, groupId? } ]
+                    properties is [ { id, text, value } ] — every base
+                    property line on the item (quality, item level, the
+                    Requires line, ...) via .item-property — see
+                    itemProperties in saved.js. id is the property's own
+                    data-field attribute (e.g. "ev" for Evasion Rating,
+                    verified 2026-08 against a real property's outerHTML),
+                    the same convention a mod's own id uses; value is the
+                    same best-effort first-number read modRollValue
+                    already does for mods. Both exist so the compare modal
+                    can offer the same click-a-stat-to-sort-every-column
+                    behavior GGG's own trade site offers for its property
+                    columns, not just for mods — see comparePropertyCell/
+                    propValueFor in saved.js. text is the full "Label:
+                    value" display string, not split into individual
+                    fields — the actual property set varies too much by
+                    item type/base to catalog beyond that. additionalStats
+                    is the same { id, text, value } shape, but from the
+                    separate .itemPopupAdditional block instead (DPS/
+                    Physical DPS/Elemental DPS for a weapon, Base
+                    Percentile/Armour/Evasion/Energy Shield for armour —
+                    see itemAdditionalStats in saved.js), kept apart from
+                    properties rather than merged into one flat list
+                    because GGG's own item popup visually separates them
+                    into their own groups (Item Level/Requires Level
+                    together, Intangibility and similar one-off quirks
+                    together, the base .item-property readings together,
+                    and this .itemPopupAdditional block together, in that
+                    order) — see itemPropertyBlocks in saved.js, which is
+                    what actually reconstructs that grouping for display;
+                    this schema just keeps the two sources apart so it
+                    can. Listings saved before either existed just have
+                    none; listings saved before id/value existed on these
+                    have plain strings instead, same fallback mods already
+                    has for the same reason. groupId,
+                    when set, references a savedGroups entry (below) — set
+                    by dragging one
+                    listing onto another,
                     cleared (deleted along with an empty group) by
                     ungrouping. Absent for a listing that's never been
                     manually grouped.
@@ -72,6 +107,22 @@
                     otherwise be name/type-only. Listings saved before this
                     existed are just never treated as unidentified, even if
                     they were.
+                    corrupted is true if GGG showed a plain "Corrupted" line
+                    on the item at save time (see isCorrupted in saved.js) —
+                    a critical identifier, since a corrupted item never
+                    rerolls and rules out most crafting, so it's shown as
+                    its own centered line (not folded into the unidentified
+                    badge's styling) matching where GGG's own popup shows
+                    it, and adds misc_filters.corrupted:"true" to "Search
+                    this exact item"'s request for the same reason
+                    unidentified adds its own identified filter above —
+                    without it, an otherwise-identical uncorrupted item can
+                    outrank the real corrupted listing on price and get
+                    captured as if it were the same item (see
+                    capturePendingPrice's seller check below for the second,
+                    independent guard against exactly that). Listings saved
+                    before this existed are just never flagged as
+                    corrupted, even if they were.
                     icon is the item's own artwork <img src> (web.poecdn.com),
                     priceIcon the currency image's own <img src> from GGG's
                     CDN — both captured at save time since a saved listing
@@ -82,14 +133,20 @@
                     see parseListedAgo in saved.js — so it's only as precise
                     as that text's unit), separate from savedAt (when you
                     clicked Save Listing). Set at save time, and refreshed
-                    (see setListingListedAt) every time "Search this exact
-                    item" finds real results, the same visit it captures a
-                    fresh price — the original listing isn't necessarily
-                    still the cheapest match by then (relisted, undercut,
-                    time passed), so this keeps "listed X ago" honest
-                    instead of frozen at whatever it read at save time.
-                    Listings saved before listedAt existed fall back to
-                    showing savedAt instead.
+                    (see updateSavedListingSnapshot) every time "Search this
+                    exact item" finds real results, the same visit it
+                    captures a fresh price — the original listing isn't
+                    necessarily still the cheapest match by then (relisted,
+                    undercut, time passed), so this keeps "listed X ago"
+                    honest instead of frozen at whatever it read at save
+                    time. The rest of the snapshot (mods, properties,
+                    rarity, icon, sourceId, ...) refreshes the same way and
+                    for the same reason — a re-search re-reads the whole row,
+                    not just its price, so e.g. a newly-added property field
+                    or a corrected mod-parsing bug shows up on next search
+                    instead of only on a fresh manual re-save. Listings saved
+                    before listedAt existed fall back to showing savedAt
+                    instead.
                     sourceId is the result row's own data-id, GGG's id for
                     that specific listing — lets PH.saved.syncSaveButtons
                     recognize "already saved" if the same search turns up
@@ -98,10 +155,30 @@
                     flavour name and base type kept apart
                     (not joined like the display title), for "Search this
                     exact item"'s query.name/query.type. mods is
-                    [ { id, text, value } ] — id is the stat's own internal
-                    id from its data-field attribute, for that same
-                    feature's stat filters; listings saved before that
-                    existed just have plain strings instead. priceHistory is
+                    [ { id, text, value, kind?, range?, affix? } ] — id is
+                    the stat's own internal id from its data-field
+                    attribute, for that same feature's stat filters;
+                    listings saved before that existed just have plain
+                    strings instead. kind ("implicit"/"explicit"/"pseudo",
+                    the last being GGG's own computed "total" summary
+                    lines like "+142 total maximum Life"), range
+                    ({min, max}, the roll's own possible bounds), and
+                    affix ({type: "prefix"/"suffix", code}) are all read
+                    straight off GGG's own display (see modLines/
+                    parseModRoll/parseModAffix in saved.js) and drive the
+                    compare modal's per-mod code label/roll-quality bar;
+                    all absent on listings saved before they existed.
+                    range is null for a mod GGG shows as a dual [a—b to
+                    c—d] range (a two-part "Adds X to Y Damage" style
+                    mod), which isn't parsed. affix.code is GGG's own raw
+                    tier code text verbatim — usually "P1"/"S4", but
+                    sometimes a compound like "P2 + P1" for a mod that's
+                    the sum of two affix rolls (verified live) — kept
+                    whole rather than reduced to a single tier number so
+                    a compound roll doesn't silently lose half of itself;
+                    affix itself is null for an implicit (not a tiered
+                    prefix/suffix affix at all) or if GGG's code text
+                    doesn't match the expected shape. priceHistory is
                     [ { amount, currency, capturedAt } ], oldest first,
                     capped at 5, same capped/deduped-history shape and
                     mechanics as a bookmark trade's own priceHistory (see
@@ -153,6 +230,14 @@
                     the API's own x-rate-limit-* response headers most
                     recently said our budget was. Shared across tabs since
                     the content script has no persistent process of its own.
+     tradeFetchCooldown  number | null   same shape and purpose as
+                    tradeSearchCooldown, but for /api/trade/fetch — a
+                    separate rate-limit budget from /api/trade/search's own,
+                    tracked separately because a results tab's own page load
+                    consumes it (to render the listings /search found) even
+                    though this content script never calls /fetch for
+                    listing data itself; see PH.saved.fetchListingHeaders
+                    and the note above it for why this call exists at all.
      settings     { tildePrefix, showPriceConversion }
      leagues      { "1": "Allflame", "2": "Runes of Aldur" }   last seen per game
 
@@ -178,6 +263,7 @@ PH.store = (() => {
     savedGroups: [],
     pendingPriceCapture: null,
     tradeSearchCooldown: null,
+    tradeFetchCooldown: null,
     settings: { tildePrefix: true, showPriceConversion: true },
     leagues: {},
   };
@@ -562,18 +648,29 @@ PH.store = (() => {
     await chrome.storage.local.set({ savedListings });
   }
 
-  /* Refreshes a saved listing's listedAt whenever "Search this exact item"
-     finds real results — see PH.saved.capturePendingPrice, which reads it
-     off the matched row the same visit it captures a price. The original
-     listing you saved may no longer be the cheapest match (relisted,
-     someone else undercut it, time passed), so this keeps "listed X ago"
-     honest rather than leaving it frozen at whatever it was at save time. */
-  async function setListingListedAt(id, listedAt) {
+  /* Merges `fields` onto a saved listing in place — used by
+     PH.saved.capturePendingPrice to refresh the whole captured snapshot
+     (mods, properties, rarity, icon, sourceId, listedAt, ...) from the
+     matched row on a real re-search, not just the price. Plain
+     Object.assign rather than a field-by-field setter: every field this
+     gets called with already comes straight from the same row-reading
+     functions captureListing itself uses, so there's nothing keeping this
+     any narrower than "whatever the caller read off the row." priceHistory
+     is deliberately never passed through here — that stays on
+     pushSavedListingPrice's own dedup path so a same-price re-search still
+     only refreshes a timestamp instead of overwriting real history.
+     capturePendingPrice checks the row's seller against the listing's own
+     stored seller before ever calling this — a real report caught the
+     "cheapest match" landing on a different, merely similar-looking item
+     (from a different seller) and silently overwriting the original
+     listing's record with it, so this function itself trusts its caller
+     to have already ruled that out rather than re-checking here. */
+  async function updateSavedListingSnapshot(id, fields) {
     const { savedListings } = await readAll();
     const listing = savedListings.find((l) => l.id === id);
     if (!listing) return;
 
-    listing.listedAt = listedAt;
+    Object.assign(listing, fields);
     await chrome.storage.local.set({ savedListings });
   }
 
@@ -622,6 +719,14 @@ PH.store = (() => {
     await chrome.storage.local.set({ tradeSearchCooldown: blockedUntil });
   }
 
+  async function getTradeFetchCooldown() {
+    return (await readAll()).tradeFetchCooldown;
+  }
+
+  async function setTradeFetchCooldown(blockedUntil) {
+    await chrome.storage.local.set({ tradeFetchCooldown: blockedUntil });
+  }
+
   /* --------------------------------------------------------------- settings */
 
   async function getSettings() {
@@ -652,10 +757,10 @@ PH.store = (() => {
     clearFolderTotalCost, clearFolderPriceHistory,
     getTrades, saveTrade, replaceTrades, deleteTrade, reorderTrades, pushTradePrice,
     getSavedListings, saveSavedListing, deleteSavedListing, deleteSavedListings, pushSavedListingPrice,
-    setListingListedAt, setListingNoResults,
+    updateSavedListingSnapshot, setListingNoResults,
     getSavedGroups, createSavedGroup, renameSavedGroup, setListingGroup, ungroupListings,
     setPendingPriceCapture, getPendingPriceCapture, clearPendingPriceCapture,
-    getTradeSearchCooldown, setTradeSearchCooldown,
+    getTradeSearchCooldown, setTradeSearchCooldown, getTradeFetchCooldown, setTradeFetchCooldown,
     noteLeague, getSettings, setSetting, getLastSeenLeagues, onChange,
   };
 })();
