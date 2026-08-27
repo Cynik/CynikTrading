@@ -1,0 +1,788 @@
+/* =========================================================================
+   panel.css — everything the extension draws.
+   =========================================================================
+   Injected into the trade page, so every class is prefixed `ph-` and we never
+   write a bare element selector. The only page elements we touch are <body>
+   (a class) and #trade (a width), both below.
+   ========================================================================= */
+
+:root {
+  --ph-width: 400px;
+  --ph-bg: rgba(8, 8, 10, 0.97);
+  /* Three-step elevation ladder — each level needs to read as clearly above
+     the one below it, or nested cards (folder > trade row) blur together. */
+  --ph-surface: #1c1f26;
+  --ph-surface-2: #2a3039;
+  --ph-surface-3: #343b47;
+  --ph-line: #454e5c;
+  --ph-ink: #f1eee5;
+  --ph-muted: #a3a09a;
+  --ph-gold: #d4af5a;
+  --ph-gold-dim: #8a7440;
+  /* A distinct tone for clickable list text (trade/saved-listing titles),
+     kept apart from --ph-gold so "this is a heading/active state" and "this
+     is a link" don't look the same. */
+  --ph-link: #dcc186;
+  --ph-blue: #4a7ab0;
+  --ph-danger: #d1665a;
+}
+
+/* ---- the trade site gives up some width so we're not covering results ---- */
+
+/* #trade is the real results/filters container — GGG's #app is an empty,
+   zero-height leftover Vue mount point that nothing renders into. Narrowing
+   #app (the original approach here) was a silent no-op on the live site;
+   verified 2026-08 by inspecting the live DOM. #trade also arrives centered
+   via GGG's own `margin: 0 auto`, so margin: 0 below is required, not just
+   tidiness — without it the box stays centered and shrinks from both sides
+   instead of just giving up its right edge to the panel. */
+
+body.ph-active { overflow-y: scroll; }
+
+/* transition stays unconditional so both narrowing and reverting animate;
+   width/max-width/margin are :not(.ph-collapsed) so a closed panel leaves
+   #trade completely untouched — GGG's own width/margin/centering wins back
+   exactly, rather than us guessing a "reverted" width/margin that matches
+   their real CSS. An earlier version applied margin:0 unconditionally and
+   only reset width when collapsed, which left the page permanently
+   off-center (and capped to a guessed 1520px) even after the panel closed. */
+body.ph-active #trade { transition: width 0.2s ease; }
+
+body.ph-active:not(.ph-collapsed) #trade {
+  width: calc(100% - var(--ph-width));
+  max-width: calc(100% - var(--ph-width));
+  margin: 0;
+}
+
+/* Better Trading hits this same problem and fixes it the same way (see
+   _search-panel.scss at github.com/exile-center/better-trading): narrowing
+   #trade doesn't narrow the real browser viewport, so GGG's own two-column
+   @media (min-width: 1200px) breakpoint for .search-advanced-pane still
+   thinks it's at full desktop width and stays two-column even when #trade
+   no longer has room for that. Rather than inventing our own narrower
+   two-column layout, we force the same single-column layout GGG's site
+   already uses below 1200px, only in the "dead zone" where #trade is
+   narrowed but the real window is still >=1200px. 1200/1599 are 1200 and
+   (1200 + --ph-width - 1) hardcoded — CSS media queries can't reference
+   custom properties, so this needs updating by hand if --ph-width changes.
+   .search-advanced-pane is Better Trading's own selector and still matches
+   the live site — verified 2026-08 via outerHTML from the real trade page;
+   this also happens to fix .controls (Search/Clear/Hide Filters), which
+   lives inside this pane and was just being squeezed by it, not broken on
+   its own. */
+@media (min-width: 1200px) and (max-width: 1599px) {
+  body.ph-active:not(.ph-collapsed) #trade .search-bar .search-advanced-pane {
+    width: 100%;
+  }
+}
+
+body.ph-active.ph-collapsed #ph-panel { right: calc(-1 * var(--ph-width)); }
+
+/* GGG's own site footer (div.bottom — copyright + terms-of-use links, a
+   sibling of the filters wrapper under div.content) is
+   position: absolute; bottom: 8px, pinned near the bottom of div.content
+   rather than flowing after the real content — verified 2026-08 via
+   DevTools on the live site. Narrowing #trade makes filter rows wrap onto
+   extra lines, growing the filters' real height, but the footer's fixed
+   8px-from-bottom offset doesn't account for that — so it ends up
+   overlapping the Search/Clear/Hide Filters row instead of clearing it.
+   Forcing it back into normal flow (only while our panel is actually
+   narrowing #trade) makes it render after the real content every time,
+   whatever height that turns out to be, rather than guessing at how much
+   extra clearance to reserve. */
+body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
+
+/* ---- panel shell ---- */
+
+#ph-panel {
+  position: fixed;
+  z-index: 1000;
+  top: 0; right: 0; bottom: 0;
+  width: var(--ph-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--ph-bg);
+  border-left: 1px solid var(--ph-line);
+  color: var(--ph-ink);
+  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  transition: right 0.2s ease;
+}
+
+.ph-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ph-line);
+  flex: 0 0 auto;
+}
+
+.ph-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ph-gold);
+}
+
+/* The chevron stays reachable when the panel is slid off-screen. */
+.ph-collapse {
+  position: absolute;
+  left: -26px;
+  top: 12px;
+  width: 26px;
+  height: 34px;
+  border: 1px solid var(--ph-line);
+  border-right: 0;
+  border-radius: 4px 0 0 4px;
+  background: var(--ph-bg);
+  color: var(--ph-gold);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ph-collapse:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+
+/* ---- tabs ---- */
+
+.ph-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--ph-line);
+  flex: 0 0 auto;
+}
+
+.ph-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ph-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ph-tab:hover { color: var(--ph-ink); background: rgba(255, 255, 255, 0.03); }
+.ph-tab-active { color: var(--ph-gold); border-bottom-color: var(--ph-gold); }
+.ph-tab-glyph { font-size: 12px; opacity: 0.85; }
+
+.ph-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Same animation Better Trading uses on its page content (a plain fade + 10px
+   rise, 0.2s ease). Scoped to direct children of .ph-body so it plays
+   whenever a tab's content is swapped in — renderBody() always replaces
+   .ph-body's children with brand-new elements (never mutates the old ones
+   in place), so this replays correctly on every tab switch or refresh. */
+@keyframes ph-slide-fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ph-body > * { animation: ph-slide-fade-in 0.2s ease; }
+
+/* ---- buttons ---- */
+
+.ph-btn {
+  padding: 6px 11px;
+  border: 1px solid var(--ph-line);
+  border-radius: 3px;
+  background: var(--ph-surface-2);
+  color: var(--ph-ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  /* .ph-btn is sometimes an <a> (e.g. Saved listings' "Open the search this
+     came from") — browsers underline anchors by default regardless of
+     class, so this has to be said explicitly. */
+  text-decoration: none;
+}
+.ph-btn:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+
+.ph-btn-primary {
+  border-color: var(--ph-gold-dim);
+  background: linear-gradient(#4a3c24, #362c19);
+  color: var(--ph-gold);
+}
+.ph-btn-primary:hover { border-color: var(--ph-gold); }
+
+.ph-btn-danger { border-color: #6b352e; color: #e79c93; }
+.ph-btn-danger:hover { background: #3d211e; border-color: var(--ph-danger); }
+
+.ph-btn-disabled { opacity: 0.45; cursor: default; }
+.ph-btn-disabled:hover { border-color: var(--ph-line); background: var(--ph-surface-2); }
+
+.ph-icon-btn {
+  border: 1px solid var(--ph-line);
+  background: var(--ph-surface-2);
+  color: var(--ph-ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.ph-icon-btn:hover { color: var(--ph-gold); border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+
+#ph-panel button:focus-visible,
+#ph-panel a:focus-visible,
+#ph-panel input:focus-visible,
+#ph-panel textarea:focus-visible {
+  outline: 2px solid var(--ph-gold);
+  outline-offset: 1px;
+}
+
+.ph-toolbar { display: flex; flex-direction: column; gap: 6px; }
+.ph-toolbar-row { display: flex; gap: 6px; }
+/* flex-basis 0 (not auto) so every button in a row ends up the same final
+   width regardless of label length, rather than just growing by the same
+   amount from its own natural size. */
+.ph-toolbar-row > .ph-btn { flex: 1 1 0; text-align: center; }
+
+/* ---- dropdown menu ---- */
+
+.ph-menu-wrap { position: relative; flex: 0 0 auto; }
+
+.ph-menu-trigger { letter-spacing: 1px; }
+
+.ph-menu {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 3px);
+  z-index: 20;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--ph-surface);
+  border: 1px solid var(--ph-line);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+.ph-menu-open .ph-menu { display: block; }
+
+.ph-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--ph-ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ph-menu-item:hover { background: var(--ph-surface-3); }
+.ph-menu-item.ph-danger { color: #e79c93; }
+.ph-menu-sep { height: 1px; margin: 4px 2px; background: var(--ph-line); }
+
+/* ---- custom hover popup (PH.ui.hoverPopup) — not the native title tooltip */
+
+.ph-hover-popup {
+  position: fixed;
+  z-index: 1003;
+  padding: 6px 8px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 4px;
+  background: var(--ph-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  font: 12px/1.6 "Segoe UI", system-ui, sans-serif;
+  color: var(--ph-ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ph-hover-popup-line {
+  padding: 1px 4px;
+  margin: 0 -4px;
+  border-radius: 3px;
+}
+.ph-hover-popup-line + .ph-hover-popup-line { margin-top: 1px; }
+
+/* The trend sparkline sits above the list, full width of the popup's own
+   padding box. display:block since an inline default <svg> leaves a few
+   stray pixels of baseline gap below it. */
+.ph-sparkline { display: block; width: 100%; height: 26px; margin-bottom: 4px; }
+
+/* Unlike the trend arrow, every entry with a predecessor gets some color
+   here, on a 3-step scale: dull under 10%, solid at 10%+, bright (a more
+   saturated neon hue, not just more opaque) at 30%+. Green/down = cheaper,
+   red/up = pricier, matching the arrow's buyer's-eye-view color choice. */
+.ph-hover-popup-line-down-dull { background: rgba(111, 174, 92, 0.14); }
+.ph-hover-popup-line-down-solid { background: rgba(111, 174, 92, 0.34); }
+.ph-hover-popup-line-down-bright { background: rgba(57, 255, 20, 0.38); }
+.ph-hover-popup-line-up-dull { background: rgba(209, 102, 90, 0.14); }
+.ph-hover-popup-line-up-solid { background: rgba(209, 102, 90, 0.34); }
+.ph-hover-popup-line-up-bright { background: rgba(255, 45, 45, 0.42); }
+
+/* ---- folder icons ---- */
+
+.ph-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  object-fit: contain; /* only affects the <img> case; harmless on the span fallback */
+}
+
+/* The monogram-badge fallback needs its own text styling; the real icon
+   <img> doesn't. */
+.ph-icon-mono {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #f2ede2;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
+}
+
+/* justify-content: center applies per wrapped line, not just to the whole
+   block — so a short trailing row (29 icons never divides evenly into any
+   row width) centers itself instead of hanging off the left edge. */
+.ph-icon-picker { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+/* Bigger than the 24px badge used elsewhere (folder rows, etc.) — this is a
+   dedicated picker where telling similar portraits apart matters more than
+   staying compact. */
+.ph-icon-picker .ph-icon { width: 48px; height: 48px; border-radius: 5px; }
+
+.ph-icon-choice {
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+.ph-icon-choice:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+.ph-icon-choice.ph-chosen { border-color: var(--ph-gold); background: rgba(212, 175, 90, 0.18); }
+
+/* ---- folders ---- */
+
+.ph-folders { display: flex; flex-direction: column; gap: 6px; }
+
+.ph-folder {
+  border: 1px solid var(--ph-line);
+  border-radius: 4px;
+  background: var(--ph-surface);
+  /* No overflow:hidden here — it would also clip any dropdown menu inside
+     that needs to extend past the folder's edge. The header rounds its own
+     corners below instead. */
+}
+.ph-folder.ph-dragging { opacity: 0.4; }
+
+.ph-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 6px 8px;
+  background: linear-gradient(var(--ph-surface-3), var(--ph-surface-2));
+  /* Matches .ph-folder's radius — collapsed, the header IS the whole card;
+     .ph-open below narrows this to just the top corners once a body follows. */
+  border-radius: 4px;
+}
+.ph-folder-head.ph-open { border-bottom: 1px solid var(--ph-line); border-radius: 4px 4px 0 0; }
+
+.ph-folder-toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 2px;
+  border: 0;
+  background: none;
+  color: var(--ph-ink);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ph-folder-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ph-ink);
+}
+
+/* Same gold-tinted "headline number" treatment as .ph-trade-price, one size
+   down since it's sharing the header row with the title. */
+.ph-folder-total {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 8px;
+  background: rgba(212, 175, 90, 0.14);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ph-gold);
+  white-space: nowrap;
+}
+
+.ph-grip {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  color: #9aa2b0;
+  font-size: 14px;
+  cursor: grab;
+  user-select: none;
+}
+.ph-grip:hover { color: var(--ph-gold); }
+
+.ph-folder-body { padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.ph-folder-empty, .ph-folder-note {
+  padding: 4px 6px;
+  color: var(--ph-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* ---- saved searches ---- */
+
+.ph-trades { display: flex; flex-direction: column; gap: 2px; }
+
+.ph-trade {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--ph-surface-2);
+}
+.ph-trade:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+.ph-trade.ph-dragging { opacity: 0.4; }
+.ph-trade.ph-done .ph-trade-title { text-decoration: line-through; opacity: 0.55; }
+
+.ph-trade-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ph-link);
+  /* !important because the trade site's own stylesheet apparently wins this
+     fight otherwise — a plain (unprefixed) rule here wasn't enough. */
+  text-decoration: none !important;
+  font-size: 12.5px;
+}
+.ph-trade-link:hover { color: var(--ph-gold); }
+.ph-trade-dead { color: var(--ph-muted); cursor: not-allowed; }
+
+.ph-trade-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ph-pin-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--ph-line);
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--ph-muted);
+  text-transform: none;
+}
+
+/* The cheapest listing at save time — a snapshot, not a live price, hence
+   the gold tint (draws the eye) but no "live" implication in the styling. */
+.ph-trade-price {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 8px;
+  background: rgba(212, 175, 90, 0.22);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ph-gold);
+  white-space: nowrap;
+}
+
+/* Cheaper/pricier than the last time this trade's price was checked —
+   green/red from a buyer's-eye view (this extension is for finding things
+   to buy, not sell), shown right next to .ph-trade-price so the direction
+   reads at a glance. */
+.ph-trade-trend {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ph-trend-down { color: #6fae5c; }
+.ph-trend-up { color: var(--ph-danger); }
+
+/* Move size on top of direction — deliberately asymmetric, not just a
+   bigger/bolder version of the same accent: a drop tops out at a gold
+   border (still reads as "green," just a stronger accent), but a big rise
+   inverts to a solid red fill with a black arrow — a real stop-and-look
+   warning, not just a thicker green/red outline. */
+.ph-trend-down.ph-trend-tier-light { border: 1px solid #6fae5c; border-radius: 3px; padding: 0 2px; }
+.ph-trend-down.ph-trend-tier-neon { border: 1px solid var(--ph-gold); border-radius: 3px; padding: 0 2px; }
+
+.ph-trend-up.ph-trend-tier-light { border: 1px solid var(--ph-danger); border-radius: 3px; padding: 0 2px; }
+.ph-trend-up.ph-trend-tier-neon {
+  color: #000;
+  background: var(--ph-danger);
+  border: 1px solid var(--ph-danger);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* poe.ninja's average, shown alongside .ph-trade-price — deliberately more
+   muted than it: it's a reference number for comparison, not the headline
+   figure. */
+.ph-trade-avg {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--ph-line);
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--ph-muted);
+  white-space: nowrap;
+}
+.ph-trade-avg-link { cursor: pointer; }
+.ph-trade-avg-link:hover { border-color: var(--ph-gold-dim); color: var(--ph-ink); }
+
+.ph-register { align-self: stretch; text-align: center; }
+
+/* ---- forms ---- */
+
+.ph-editor {
+  padding: 8px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 4px;
+  background: #20242c;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ph-editor-note { color: var(--ph-muted); font-size: 11.5px; }
+.ph-editor-note.ph-error { color: #e79c93; }
+
+.ph-form { display: flex; flex-direction: column; gap: 8px; }
+.ph-form-actions { display: flex; gap: 6px; }
+
+.ph-input, .ph-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--ph-line);
+  border-radius: 3px;
+  background: #0f1216;
+  color: var(--ph-ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.ph-textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 11px; }
+
+.ph-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ph-muted);
+  cursor: pointer;
+}
+.ph-checkbox input { accent-color: var(--ph-gold); margin: 0; }
+
+.ph-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--ph-line);
+  background: #241b1a;
+}
+.ph-confirm-msg { flex: 1 1 140px; font-size: 12px; }
+
+/* ---- saved listings ---- */
+
+/* The save button injected into a result row's own button cluster
+   (.details .btns), styled to sit alongside the trade site's own buttons
+   there rather than looking like part of our panel. */
+.ph-save-btn {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 12px;
+}
+.ph-save-btn:hover { opacity: 1; border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+
+.ph-saved-list { display: flex; flex-direction: column; gap: 8px; }
+
+.ph-saved-row {
+  border: 1px solid var(--ph-line);
+  border-radius: 4px;
+  background: var(--ph-surface);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ph-saved-head { display: flex; align-items: baseline; gap: 8px; }
+
+.ph-saved-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ph-link);
+}
+
+.ph-saved-price { flex: 0 0 auto; color: var(--ph-gold); font-size: 12px; }
+
+.ph-saved-meta { color: var(--ph-muted); font-size: 10.5px; }
+
+.ph-saved-mods {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--ph-ink);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ---- backup ---- */
+
+.ph-backup {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--ph-line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ph-backup-label {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ph-muted);
+}
+.ph-backup-actions { display: flex; gap: 6px; }
+.ph-backup-note { color: #86837c; font-size: 11px; line-height: 1.45; }
+
+/* ---- odds and ends ---- */
+
+.ph-empty {
+  padding: 14px 8px;
+  color: var(--ph-muted);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.ph-notice {
+  padding: 7px 9px;
+  border-left: 2px solid var(--ph-gold-dim);
+  background: rgba(212, 175, 90, 0.1);
+  color: #c9c3b6;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.ph-converted {
+  margin-left: 6px;
+  font-size: 0.85em;
+  color: #9aa8b8;
+  white-space: nowrap;
+}
+
+.ph-offscreen {
+  position: fixed;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.ph-toast {
+  position: fixed;
+  right: calc(var(--ph-width) + 16px);
+  bottom: 20px;
+  z-index: 1001;
+  padding: 9px 14px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 4px;
+  background: #262c35;
+  color: var(--ph-ink);
+  font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+body.ph-collapsed .ph-toast { right: 16px; }
+.ph-toast-error { border-color: #6b352e; color: #e8a79f; }
+.ph-toast-out { opacity: 0; transform: translateY(6px); }
+
+/* ---- folder picker dialog ---- */
+
+.ph-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1002;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.ph-dialog {
+  min-width: 260px;
+  max-width: 340px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 5px;
+  background: var(--ph-surface);
+  color: var(--ph-ink);
+  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ph-dialog-title {
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ph-gold);
+}
+.ph-dialog-choice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 1px solid var(--ph-line);
+  border-radius: 3px;
+  background: var(--ph-surface-2);
+  color: var(--ph-ink);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.ph-dialog-choice:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  #ph-panel, body.ph-active #trade, .ph-toast { transition: none; }
+  .ph-body > * { animation: none; }
+}

@@ -1,0 +1,42 @@
+<meta charset="utf-8" />
+<title>PoE Trade Helper</title>
+<style>
+  body {
+    width: 300px; margin: 0; padding: 12px;
+    font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+    color: #e6e3dc; background: #16181c;
+  }
+  h1 { margin: 0 0 4px; font-size: 13px; letter-spacing: .05em;
+       text-transform: uppercase; color: #c9a44c; }
+  .rate { margin-bottom: 12px; color: #8d8a83; font-size: 12px; }
+  label { display: flex; align-items: flex-start; gap: 8px;
+          padding: 8px 0; border-top: 1px solid #2e333b; cursor: pointer; }
+  label input { accent-color: #c9a44c; margin: 2px 0 0; }
+  label span { flex: 1; }
+  label small { display: block; color: #6f736f; font-size: 11px; line-height: 1.4; }
+  code { background: #23282f; border-radius: 3px; padding: 0 3px;
+         font-family: ui-monospace, monospace; color: #cbb277; }
+  .hint { margin-top: 12px; padding-top: 10px; border-top: 1px solid #2e333b;
+          color: #6f736f; font-size: 11px; line-height: 1.5; }
+</style>
+
+<h1>Trade Helper</h1>
+<div class="rate" id="rate">Loading exchange rate…</div>
+
+<label>
+  <input type="checkbox" id="tilde" />
+  <span>Auto-type <code>~</code> in stat filters
+    <small>Makes the mod search fuzzy by default. Delete the tilde for an exact search.</small>
+  </span>
+</label>
+
+<label>
+  <input type="checkbox" id="prices" />
+  <span>Show chaos ↔ divine on listings
+    <small>Appends the other currency's value next to each price. Rate from poe.ninja, cached 15 minutes.</small>
+  </span>
+</label>
+
+<div class="hint">Bookmarks, live searches and saved listings live in the panel on the trade page itself — click the ‹ tab on the right edge.</div>
+
+<script src="popup.js"></script>
