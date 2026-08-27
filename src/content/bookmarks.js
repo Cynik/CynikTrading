@@ -144,8 +144,8 @@ PH.bookmarks = (() => {
        storage read instead of twenty" property intact even with Total Cost
        visible everywhere. It can go stale between opens (a price change
        elsewhere doesn't retroactively update a folder you haven't opened
-       since), which is the deliberate trade-off the developer asked for over always
-       reading every folder's trades up front. */
+       since), which is the deliberate trade-off the developer asked for over
+       always reading every folder's trades up front. */
     const totalHistory = folder.totalCostHistory ?? [];
     const { badge: totalBadge, trendBadge: totalTrendBadge } = priceTrendUI(totalHistory, {
       badgeClass: "ph-folder-total",
