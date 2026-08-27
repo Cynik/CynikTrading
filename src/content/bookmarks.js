@@ -13,22 +13,10 @@ PH.bookmarks = (() => {
   /* Which folders are open is UI state, so it lives in localStorage. */
   const expanded = () => new Set((localStorage.getItem(EXPANDED_KEY) || "").split(",").filter(Boolean));
 
-  /* Tracks which open folders have already had their Total Cost recomputed
-     this "open session" — renderTrades checks this so opening a folder
-     pushes at most once, not on every re-render that happens while it
-     stays open (editing a trade, clearing history, reordering, etc. all
-     trigger a re-render, but none of those is "opening the folder" and
-     shouldn't each re-push). Cleared here on collapse so the next open is a
-     genuinely fresh push — this is what makes "Clear Total Cost history"
-     actually stick until you close and reopen the folder, instead of being
-     silently undone by the very next re-render. */
-  const totalCostPushedThisOpen = new Set();
-
   function setExpanded(id, open) {
     const set = expanded();
     open ? set.add(id) : set.delete(id);
     localStorage.setItem(EXPANDED_KEY, [...set].join(","));
-    if (!open) totalCostPushedThisOpen.delete(id);
   }
 
   const showArchive = () => localStorage.getItem(SHOW_ARCHIVE_KEY) === "true";
@@ -121,13 +109,7 @@ PH.bookmarks = (() => {
     const row2 = el("div", { class: "ph-toolbar-row" },
       button(allExpanded ? "Collapse all" : "Expand all", {
         onClick: () => {
-          /* Routed through setExpanded (not a single bulk localStorage
-             write) so collapsing also resets totalCostPushedThisOpen for
-             each folder — otherwise a folder collapsed via this button and
-             later reopened on its own would find itself already marked
-             "pushed this session" and silently skip recomputing Total
-             Cost. */
-          for (const f of visibleNow) setExpanded(f.id, !allExpanded);
+          localStorage.setItem(EXPANDED_KEY, allExpanded ? "" : visibleNow.map((f) => f.id).join(","));
           PH.panel.refresh();
         },
       })
@@ -264,30 +246,26 @@ PH.bookmarks = (() => {
   async function renderTrades(body, folder, context) {
     const trades = await PH.store.getTrades(folder.id);
 
-    /* Total Cost is only ever recomputed once per "open session" — see
-       totalCostPushedThisOpen. renderTrades runs on EVERY re-render of an
-       open folder (editing a trade, clearing history, reordering, ...),
-       not just the moment it was opened, so without this guard a push
-       would fire on every one of those too: besides being pointless
-       churn, it would also immediately undo "Clear Total Cost history"
-       the instant the folder's next incidental re-render happened,
-       defeating the point of clearing it at all. Skipped (and still
-       marked handled) when there's nothing to count, or the value hasn't
-       actually changed from the last recorded amount — not just left to
-       PH.store.pushFolderTotalCost's own dedup, which still performs a
-       write (a timestamp refresh on the latest entry) that would trigger
-       PH.store.onChange -> PH.panel.refresh() -> another renderTrades. */
-    if (!totalCostPushedThisOpen.has(folder.id)) {
-      totalCostPushedThisOpen.add(folder.id);
-      const freshTotal = totalCostFor(trades);
-      const lastRecorded = folder.totalCostHistory?.at(-1)?.amount ?? null;
-      if (freshTotal != null && freshTotal !== lastRecorded) {
-        await PH.store.pushFolderTotalCost(folder.id, {
-          amount: freshTotal,
-          currency: "chaos",
-          capturedAt: new Date().toISOString(),
-        });
-      }
+    /* Total Cost recomputes on every render of an open folder, same as the
+       trade rows below it draw from this same `trades` — so it never
+       visibly disagrees with what's actually shown per-trade. The only
+       thing guarding against a runaway refresh loop is the value check
+       below (renderTrades runs again after every push, since that's a
+       storage write PH.store.onChange reacts to — but the second run
+       finds freshTotal already matches what's now stored and skips
+       pushing again, so it settles after one extra cycle rather than
+       looping forever). Not just left to PH.store.pushFolderTotalCost's
+       own dedup, which still performs a write (a timestamp refresh on the
+       latest entry) — that write alone would be enough to keep the loop
+       going. */
+    const freshTotal = totalCostFor(trades);
+    const lastRecorded = folder.totalCostHistory?.at(-1)?.amount ?? null;
+    if (freshTotal != null && freshTotal !== lastRecorded) {
+      await PH.store.pushFolderTotalCost(folder.id, {
+        amount: freshTotal,
+        currency: "chaos",
+        capturedAt: new Date().toISOString(),
+      });
     }
 
     if (trades.length === 0 && editing?.kind !== "new-trade") {
@@ -355,9 +333,15 @@ PH.bookmarks = (() => {
     const isPoe1 = (folder.version ?? "1") === "1";
     const ninja = isPoe1 && latest ? PH.prices.matchItem(trade.title) : null;
     const avgBadge = ninja
+      /* title:"" for the same reason as priceBadge above — this also sits
+         inside the row's own <a> and would otherwise inherit its
+         league/slug title. The real description goes through
+         PH.ui.hoverPopup instead of a real title attribute, since this
+         text is long enough that the browser's native tooltip renders as
+         a large plain box that visibly lingered right after a click. */
       ? el("span", {
           class: `ph-trade-avg${ninja.ninjaUrl ? " ph-trade-avg-link" : ""}`,
-          title: `poe.ninja average, ${ninja.listingCount} listing${ninja.listingCount === 1 ? "" : "s"} — may not match this exact item's variant (links, mods, gem level/quality, etc.)${ninja.ninjaUrl ? ". Click to view on poe.ninja." : ""}`,
+          title: "",
           text: `avg ${formatNinjaValue(ninja, latest.currency)}`,
           /* Nested inside the row's own <a> (a link to the trade search), so
              this has to stop that click from also firing — a nested <a>
@@ -368,11 +352,26 @@ PH.bookmarks = (() => {
             ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                /* Opening a background/new tab doesn't reliably fire
+                   mouseleave on this span (the cursor itself never moves),
+                   so the hover popup could otherwise linger open behind
+                   the new tab — close it explicitly instead of counting
+                   on that event. */
+                PH.ui.closeHoverPopup();
                 window.open(ninja.ninjaUrl, "_blank", "noopener,noreferrer");
               }
             : undefined,
         })
       : null;
+
+    if (avgBadge) {
+      const lines = [
+        `poe.ninja average, ${ninja.listingCount} listing${ninja.listingCount === 1 ? "" : "s"}`,
+        "May not match this exact item's variant (links, mods, gem level/quality, etc.)",
+      ];
+      if (ninja.ninjaUrl) lines.push("Click to view on poe.ninja");
+      PH.ui.hoverPopup(avgBadge, lines);
+    }
 
     const link = url
       ? el("a", { class: "ph-trade-link", href: url, title: `${league} · ${trade.location.slug}` },

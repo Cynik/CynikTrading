@@ -58,10 +58,19 @@ to `content_scripts[0].js` *in dependency order* — `store.js` must load first,
    catalog for (uniques, gems, corpses, ...), a poe.ninja average-price
    badge that links straight to that item's poe.ninja page. Each folder's
    header also shows a **Total Cost** — the sum of every trade's latest
-   price — cached on the folder and refreshed only when you open it, so a
-   collapsed folder shows its last-known total without a trades fetch (can
-   go stale between opens; that's deliberate, see the note by
-   `totalCostBadge` in bookmarks.js). Working.
+   price, in chaos or divine (whichever's smaller-numbered) — with the same
+   trend arrow/hover-popup/sparkline treatment as a trade's own price.
+   Recomputes on every render while the folder is open, so it never
+   disagrees with what's shown per-trade below it; while collapsed it just
+   shows the last value it recorded (`folder.totalCostHistory`, cached on
+   the folder itself) without a trades fetch, which can go stale until you
+   next open that folder — see the note above `totalCostFor` and
+   `renderTrades` in bookmarks.js. Its own history (separate from each
+   trade's) can be reset from the folder's `···` menu — "Reset Total Cost
+   trend" keeps the current number but drops the trend baseline;
+   "Clear price history for this folder" wipes every trade's price history
+   (and Total Cost along with it, since it has nothing left to sum).
+   Working.
 2. **Live searches** — a flat, persisted watchlist of searches (same
    `{version, type, slug}` location shape as a bookmark), added from the
    current page or pulled in from a bookmark folder, each with a one-click
