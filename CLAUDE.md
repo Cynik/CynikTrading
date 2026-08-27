@@ -10,7 +10,7 @@ and Chrome Web Store publishing is not the distribution path — this runs
 unpacked. Don't suggest CWS listing or Chrome-only APIs without checking
 Opera's Chromium version at `opera://about`.
 
-The developer is new to extensions, APIs, and git. Explain the *why* alongside changes,
+The developer is new to extensions, APIs, and git. Explain the _why_ alongside changes,
 and prefer the boring obvious solution over the clever one.
 
 ## Reading order
@@ -23,7 +23,7 @@ and prefer the boring obvious solution over the clever one.
 
 Content scripts are **classic scripts, not modules**, listed in order in the
 manifest. They share one `window.PH` namespace. Adding a file means adding it
-to `content_scripts[0].js` *in dependency order* — `store.js` must load first,
+to `content_scripts[0].js` _in dependency order_ — `store.js` must load first,
 `main.js` last.
 
 - `src/content/store.js` — the only file that touches `chrome.storage`
@@ -48,7 +48,7 @@ to `content_scripts[0].js` *in dependency order* — `store.js` must load first,
 1. **Bookmarks** — folders with icons, saved searches, drag-reorder, archive,
    mark-as-done, rename, "point at the search I'm on now", share codes, file
    backup. Each trade keeps a rolling history of its cheapest observed price
-   (last 5, oldest first), captured on save/repoint *and* automatically
+   (last 5, oldest first), captured on save/repoint _and_ automatically
    whenever you visit that bookmarked search on the trade site — with a ▲/▼
    trend indicator comparing the two most recent, colored by move size (a
    border at 10%+, gold at 30%+ for a drop, an inverted black-on-red fill at
@@ -82,7 +82,7 @@ to `content_scripts[0].js` *in dependency order* — `store.js` must load first,
    against a real unique item's row — see the note at the top of `saved.js`.
    **Still missing**: "rebuild a search from this item's own stats" — a
    different, larger piece needing unverified selectors for the advanced
-   search form's *set* behavior, not just reading a row. Capturing and
+   search form's _set_ behavior, not just reading a row. Capturing and
    managing listings works now; reconstruction doesn't exist yet.
 4. **Auto-`~`** — a leading `~` makes the stat filter search fuzzy, so it's
    typed into every empty stat box, including one you just deleted it from —
@@ -106,7 +106,7 @@ to `content_scripts[0].js` *in dependency order* — `store.js` must load first,
   league → current page → last seen for that game, tracked by
   `PH.store.noteLeague` on every URL change). This is what makes them survive
   a league reset — do not "fix" it by storing the league. A saved listing
-  *does* keep its league, because it's a record of a specific past moment,
+  _does_ keep its league, because it's a record of a specific past moment,
   not a reusable search.
 - **Selectors live at the top of the file that uses them**, with a comment
   saying whether they're verified. Never invent one; gate a feature off rather
@@ -139,7 +139,7 @@ to `content_scripts[0].js` *in dependency order* — `store.js` must load first,
 
 GGG's Terms of Use forbid automated software acting on their site (§7c), data
 extraction/scraping (§7f), and reverse-engineering undocumented endpoints
-(§7i — and `/api/trade/*` is *not* in their developer docs). Their developer
+(§7i — and `/api/trade/*` is _not_ in their developer docs). Their developer
 docs also require that macros be manually invoked, one action per invocation.
 
 So: **this extension reads the page the user already loaded and stores things
@@ -163,7 +163,7 @@ endorsed by Grinding Gear Games in any way."
 Everything else needs the browser:
 
 1. `opera://extensions` (Ctrl+Shift+E) → reload the extension card.
-2. Reload the trade page (content script changes need *both*).
+2. Reload the trade page (content script changes need _both_).
 3. F12 on the trade page → Console → filter `PoE Helper`.
 4. `opera://extensions` → "service worker" link → separate console for the
    background script. Close that window before believing it works; having it
@@ -187,7 +187,7 @@ Priorities, in order:
    needs the developer.** The last missing piece of Saved listings: type each mod's
    text into the "+ Add Stat Filter" flow and fill the resulting min/max
    range from the rolled value. Needs verified selectors for the
-   category/rarity dropdowns' *set* behavior (not just read, like
+   category/rarity dropdowns' _set_ behavior (not just read, like
    `search-panel.js` does today), the add-stat-filter control, the
    stat-search dropdown, and the numeric range inputs — none of which exist
    yet. Ask the developer to paste outerHTML (right-click → Inspect → Copy → Copy
@@ -197,8 +197,8 @@ Priorities, in order:
 2. **Check the Live searches tab against the real page.** Verify "Add current
    search", "From bookmarks…", and "Open live search" all work against the
    live site's URLs and league resolution.
-3. **Migrate the developer's Better Trading data before they uninstall it.** Their *Save
-   file* → our **Restore from file**. Verify folder titles, icons and search
+3. **Migrate the developer's Better Trading data before they uninstall it.** Their _Save
+   file_ → our **Restore from file**. Verify folder titles, icons and search
    counts survived, then compare a few links.
 
 Done: **The panel's viewport-narrowing dead zone and footer overlap, verified
@@ -211,7 +211,7 @@ instead of gracefully stacking. Confirmed this is a known problem, not
 something specific to this codebase, against Better Trading's own source
 (github.com/exile-center/better-trading) — its `_search-panel.scss` hits the
 identical issue and patches it the identical way: a media query keyed to the
-*real* window width, forcing single-column layout only in the "dead zone"
+_real_ window width, forcing single-column layout only in the "dead zone"
 where `#trade` is narrowed but the real window is still wide enough that GGG
 thinks it's desktop. `.search-advanced-pane` is Better Trading's own selector
 and still matches the live site today. Separately, GGG's site footer
@@ -252,7 +252,7 @@ Done: **Saved listings' capture button.** Real selectors now, verified
 all read cleanly; the price reuses `PH.prices.readRowPrice`. See the note at
 the top of `saved.js`. Also fixed in the same pass: the chaos↔divine
 conversion's amount-parsing was silently broken (`.currency-text` turned out
-to hold the currency's *name*, not the number) — see the note at the top of
+to hold the currency's _name_, not the number) — see the note at the top of
 `prices.js`.
 
 Done: **Folder icon artwork.** Real icons now — Better Trading's 64
