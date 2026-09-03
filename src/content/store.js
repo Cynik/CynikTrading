@@ -1,8 +1,8 @@
 /* =========================================================================
    store.js — everything that gets saved, and the only file that touches
-   chrome.storage. Loaded first, so every other file can use PH.store.
+   browser storage. Loaded first, so every other file can use PH.store.
    =========================================================================
-   Data model (all under chrome.storage.local):
+   Data model (all under PH.browserAPI.storage.local):
 
      folders      [ { id, title, icon, version, archivedAt, totalCostHistory? } ]
                     totalCostHistory is [ { amount, currency: "chaos",
@@ -274,6 +274,16 @@
 
 window.PH = window.PH || {};
 
+/* Firefox exposes a promise-based `browser.*` namespace; Chrome only has
+   `chrome.*`, whose MV3 storage/runtime methods also resolve without a
+   callback. Firefox does provide a `chrome.*` alias too, but it's
+   callback-only there, so an `await chrome.storage.local.get(...)` call
+   (the shape used throughout this file) would silently get back
+   `undefined` instead of the real result. Resolving to whichever global
+   actually exists once, here, keeps every `await PH.browserAPI....` call
+   below correct on both browsers without a bundled polyfill. */
+PH.browserAPI = window.browser ?? window.chrome;
+
 PH.store = (() => {
   const LOG = (...a) => console.log("[PoE Helper store]", ...a);
 
@@ -296,7 +306,7 @@ PH.store = (() => {
   };
 
   async function readAll() {
-    const raw = await chrome.storage.local.get(Object.keys(DEFAULTS));
+    const raw = await PH.browserAPI.storage.local.get(Object.keys(DEFAULTS));
     const data = {};
     for (const key of Object.keys(DEFAULTS)) {
       data[key] = raw[key] ?? structuredClone(DEFAULTS[key]);
@@ -305,7 +315,7 @@ PH.store = (() => {
   }
 
   /* Every mutator below reads some slice of storage, changes it in memory,
-     then writes it back — and chrome.storage.local has no compare-and-swap,
+     then writes it back — and PH.browserAPI.storage.local has no compare-and-swap,
      so that read-then-write is NOT atomic. Two of these firing close
      together (a fast double-click before a button disables itself, or the
      same action taken in two trade-site tabs open at once) can interleave:
@@ -322,7 +332,7 @@ PH.store = (() => {
      runs its whole body inside this — including migrateLegacyBookmarks,
      where serializing is what stops two tabs racing to import the same
      legacy `bookmarks` array twice: whichever runs second sees the first
-     one's chrome.storage.local.remove("bookmarks") already happened. */
+     one's PH.browserAPI.storage.local.remove("bookmarks") already happened. */
   let writeChain = Promise.resolve();
   function withLock(fn) {
     if (typeof navigator !== "undefined" && navigator.locks?.request) {
@@ -339,11 +349,11 @@ PH.store = (() => {
      ---------------------------------------------------------------------- */
   async function migrateLegacyBookmarks() {
     return withLock(async () => {
-      const { bookmarks } = await chrome.storage.local.get("bookmarks");
+      const { bookmarks } = await PH.browserAPI.storage.local.get("bookmarks");
       if (!Array.isArray(bookmarks) || bookmarks.length === 0) return;
 
-      const folders = (await chrome.storage.local.get("folders")).folders ?? [];
-      const trades = (await chrome.storage.local.get("trades")).trades ?? {};
+      const folders = (await PH.browserAPI.storage.local.get("folders")).folders ?? [];
+      const trades = (await PH.browserAPI.storage.local.get("trades")).trades ?? {};
 
       const folderId = newId();
       folders.push({
@@ -367,8 +377,8 @@ PH.store = (() => {
         })
         .filter(Boolean);
 
-      await chrome.storage.local.set({ folders, trades });
-      await chrome.storage.local.remove("bookmarks");
+      await PH.browserAPI.storage.local.set({ folders, trades });
+      await PH.browserAPI.storage.local.remove("bookmarks");
       LOG(`migrated ${trades[folderId].length} old bookmarks into a folder`);
     });
   }
@@ -397,7 +407,7 @@ PH.store = (() => {
         folder.archivedAt = folder.archivedAt ?? null;
         folders.push(folder);
       }
-      await chrome.storage.local.set({ folders });
+      await PH.browserAPI.storage.local.set({ folders });
       return folder;
     });
   }
@@ -406,7 +416,7 @@ PH.store = (() => {
     return withLock(async () => {
       const { folders, trades } = await readAll();
       delete trades[folderId];
-      await chrome.storage.local.set({
+      await PH.browserAPI.storage.local.set({
         folders: folders.filter((f) => f.id !== folderId),
         trades,
       });
@@ -424,7 +434,7 @@ PH.store = (() => {
       folder.archivedAt = folder.archivedAt ? null : new Date().toUTCString();
       folders.splice(i, 1);
       folders.push(folder);
-      await chrome.storage.local.set({ folders });
+      await PH.browserAPI.storage.local.set({ folders });
     });
   }
 
@@ -444,7 +454,7 @@ PH.store = (() => {
       slots.forEach((slot, n) => {
         folders[slot] = byId.get(visibleIdsInNewOrder[n]);
       });
-      await chrome.storage.local.set({ folders });
+      await PH.browserAPI.storage.local.set({ folders });
     });
   }
 
@@ -476,7 +486,7 @@ PH.store = (() => {
         list.push(trade);
       }
       trades[folderId] = list;
-      await chrome.storage.local.set({ trades });
+      await PH.browserAPI.storage.local.set({ trades });
       return trade;
     });
   }
@@ -485,7 +495,7 @@ PH.store = (() => {
     return withLock(async () => {
       const { trades } = await readAll();
       trades[folderId] = list;
-      await chrome.storage.local.set({ trades });
+      await PH.browserAPI.storage.local.set({ trades });
     });
   }
 
@@ -493,7 +503,7 @@ PH.store = (() => {
     return withLock(async () => {
       const { trades } = await readAll();
       trades[folderId] = (trades[folderId] ?? []).filter((t) => t.id !== tradeId);
-      await chrome.storage.local.set({ trades });
+      await PH.browserAPI.storage.local.set({ trades });
     });
   }
 
@@ -535,7 +545,7 @@ PH.store = (() => {
       const history = trade.priceHistory ?? (trade.priceAtSave ? [trade.priceAtSave] : []);
       list[i] = { ...trade, priceHistory: nextPriceHistory(history, entry) };
       trades[folderId] = list;
-      await chrome.storage.local.set({ trades });
+      await PH.browserAPI.storage.local.set({ trades });
     });
   }
 
@@ -552,7 +562,7 @@ PH.store = (() => {
 
       const history = folders[i].totalCostHistory ?? [];
       folders[i] = { ...folders[i], totalCostHistory: nextPriceHistory(history, entry) };
-      await chrome.storage.local.set({ folders });
+      await PH.browserAPI.storage.local.set({ folders });
     });
   }
 
@@ -571,7 +581,7 @@ PH.store = (() => {
 
       const latest = (folders[i].totalCostHistory ?? []).at(-1);
       folders[i] = { ...folders[i], totalCostHistory: latest ? [latest] : [] };
-      await chrome.storage.local.set({ folders });
+      await PH.browserAPI.storage.local.set({ folders });
     });
   }
 
@@ -595,7 +605,7 @@ PH.store = (() => {
       const i = folders.findIndex((f) => f.id === folderId);
       if (i !== -1) folders[i] = { ...folders[i], totalCostHistory: [] };
 
-      await chrome.storage.local.set({ trades, folders });
+      await PH.browserAPI.storage.local.set({ trades, folders });
     });
   }
 
@@ -607,7 +617,7 @@ PH.store = (() => {
       const reordered = idsInNewOrder.map((id) => byId.get(id)).filter(Boolean);
       if (reordered.length !== list.length) return;
       trades[folderId] = reordered;
-      await chrome.storage.local.set({ trades });
+      await PH.browserAPI.storage.local.set({ trades });
     });
   }
 
@@ -622,7 +632,7 @@ PH.store = (() => {
       const { leagues } = await readAll();
       if (leagues[loc.version] === loc.league) return;
       leagues[loc.version] = loc.league;
-      await chrome.storage.local.set({ leagues });
+      await PH.browserAPI.storage.local.set({ leagues });
     });
   }
 
@@ -638,26 +648,15 @@ PH.store = (() => {
     return (await readAll()).savedListings;
   }
 
-  async function saveSavedListing(listing) {
-    return withLock(async () => {
-      const { savedListings } = await readAll();
-      listing.id = newId();
-      listing.savedAt = listing.savedAt ?? new Date().toISOString();
-      savedListings.unshift(listing);
-      await chrome.storage.local.set({ savedListings });
-      return listing;
-    });
-  }
-
-  /* Same as saveSavedListing, but the "is this already saved?" check and
-     the write happen under the same lock — so two saves fired close
-     together (two tabs on the same search, or a click landing twice
-     before the button disables) can't both pass the check against the
-     same stale read and both write a duplicate. `isDuplicate` is the
-     caller's own matching logic (PH.saved.matchingListing scoped to one
-     candidate); it runs against a fresh read taken right before the
-     write, not whatever the caller read earlier. Returns the saved
-     listing, or null if a duplicate was found and nothing was written. */
+  /* The "is this already saved?" check and the write happen under the same
+     lock — so two saves fired close together (two tabs on the same search,
+     or a click landing twice before the button disables) can't both pass
+     the check against the same stale read and both write a duplicate.
+     `isDuplicate` is the caller's own matching logic (PH.saved.matchingListing
+     scoped to one candidate); it runs against a fresh read taken right
+     before the write, not whatever the caller read earlier. Returns the
+     saved listing, or null if a duplicate was found and nothing was
+     written. */
   async function saveSavedListingUnlessDuplicate(listing, isDuplicate) {
     return withLock(async () => {
       const { savedListings } = await readAll();
@@ -666,7 +665,7 @@ PH.store = (() => {
       listing.id = newId();
       listing.savedAt = listing.savedAt ?? new Date().toISOString();
       savedListings.unshift(listing);
-      await chrome.storage.local.set({ savedListings });
+      await PH.browserAPI.storage.local.set({ savedListings });
       return listing;
     });
   }
@@ -697,7 +696,7 @@ PH.store = (() => {
       }
 
       const stillUsed = new Set(remaining.map((l) => l.groupId).filter(Boolean));
-      await chrome.storage.local.set({
+      await PH.browserAPI.storage.local.set({
         savedListings: remaining,
         savedGroups: (savedGroups ?? []).filter((g) => stillUsed.has(g.id)),
       });
@@ -718,7 +717,7 @@ PH.store = (() => {
       const { savedGroups } = await readAll();
       const group = { id: newId(), title };
       const list = [...(savedGroups ?? []), group];
-      await chrome.storage.local.set({ savedGroups: list });
+      await PH.browserAPI.storage.local.set({ savedGroups: list });
       return group;
     });
   }
@@ -730,7 +729,7 @@ PH.store = (() => {
       if (!group) return;
 
       group.title = title;
-      await chrome.storage.local.set({ savedGroups });
+      await PH.browserAPI.storage.local.set({ savedGroups });
     });
   }
 
@@ -759,7 +758,7 @@ PH.store = (() => {
         }
       }
 
-      await chrome.storage.local.set({ savedListings, savedGroups: groups });
+      await PH.browserAPI.storage.local.set({ savedListings, savedGroups: groups });
     });
   }
 
@@ -773,7 +772,7 @@ PH.store = (() => {
       for (const l of savedListings) {
         if (l.groupId === groupId) l.groupId = null;
       }
-      await chrome.storage.local.set({
+      await PH.browserAPI.storage.local.set({
         savedListings,
         savedGroups: (savedGroups ?? []).filter((g) => g.id !== groupId),
       });
@@ -793,7 +792,7 @@ PH.store = (() => {
       if (!listing) return;
 
       listing.priceHistory = nextPriceHistory(listing.priceHistory ?? [], entry);
-      await chrome.storage.local.set({ savedListings });
+      await PH.browserAPI.storage.local.set({ savedListings });
     });
   }
 
@@ -821,7 +820,7 @@ PH.store = (() => {
       if (!listing) return;
 
       Object.assign(listing, fields);
-      await chrome.storage.local.set({ savedListings });
+      await PH.browserAPI.storage.local.set({ savedListings });
     });
   }
 
@@ -832,7 +831,7 @@ PH.store = (() => {
      that same row's "Cancel" or by deleting the listing outright.
      Persisted on the listing itself rather than kept as in-memory UI
      state, specifically so it shows up via the ordinary
-     chrome.storage.onChange -> refresh every tab already reacts to — no
+     PH.browserAPI.storage.onChange -> refresh every tab already reacts to — no
      need to guess which tab counts as "the" one to prompt in when the
      results tab the search just opened has its own independent copy of
      this same row. */
@@ -844,14 +843,14 @@ PH.store = (() => {
 
       if (value) listing.noResultsFound = true;
       else delete listing.noResultsFound;
-      await chrome.storage.local.set({ savedListings });
+      await PH.browserAPI.storage.local.set({ savedListings });
     });
   }
 
   /* ------------------------------------------------------- price capture */
 
   async function setPendingPriceCapture(id) {
-    await chrome.storage.local.set({ pendingPriceCapture: id });
+    await PH.browserAPI.storage.local.set({ pendingPriceCapture: id });
   }
 
   async function getPendingPriceCapture() {
@@ -859,7 +858,7 @@ PH.store = (() => {
   }
 
   async function clearPendingPriceCapture() {
-    await chrome.storage.local.set({ pendingPriceCapture: null });
+    await PH.browserAPI.storage.local.set({ pendingPriceCapture: null });
   }
 
   /* ------------------------------------------------- search this exact item */
@@ -869,7 +868,7 @@ PH.store = (() => {
   }
 
   async function setTradeSearchCooldown(blockedUntil) {
-    await chrome.storage.local.set({ tradeSearchCooldown: blockedUntil });
+    await PH.browserAPI.storage.local.set({ tradeSearchCooldown: blockedUntil });
   }
 
   async function getTradeFetchCooldown() {
@@ -877,7 +876,7 @@ PH.store = (() => {
   }
 
   async function setTradeFetchCooldown(blockedUntil) {
-    await chrome.storage.local.set({ tradeFetchCooldown: blockedUntil });
+    await PH.browserAPI.storage.local.set({ tradeFetchCooldown: blockedUntil });
   }
 
   async function getTradeRateState() {
@@ -886,7 +885,7 @@ PH.store = (() => {
 
   async function setTradeRateState(endpoint, data) {
     const tradeRateState = await getTradeRateState();
-    await chrome.storage.local.set({ tradeRateState: { ...tradeRateState, [endpoint]: data } });
+    await PH.browserAPI.storage.local.set({ tradeRateState: { ...tradeRateState, [endpoint]: data } });
   }
 
   const CLICK_HORIZON_DEFAULT_SECONDS = 120;
@@ -922,7 +921,7 @@ PH.store = (() => {
     const now = Date.now();
     const tradeLinkClicks = data.tradeLinkClicks.filter((t) => now - t < horizonMs);
     tradeLinkClicks.push(now);
-    await chrome.storage.local.set({ tradeLinkClicks });
+    await PH.browserAPI.storage.local.set({ tradeLinkClicks });
   }
 
   /* --------------------------------------------------------------- settings */
@@ -938,7 +937,7 @@ PH.store = (() => {
   /* Let any part of the UI react to a change made somewhere else — the
      popup toggling a setting, or a second trade tab adding a bookmark. */
   function onChange(callback) {
-    chrome.storage.onChanged.addListener((changes, area) => {
+    PH.browserAPI.storage.onChanged.addListener((changes, area) => {
       if (area === "local") callback(changes);
     });
   }
@@ -948,7 +947,7 @@ PH.store = (() => {
     getFolders, saveFolder, deleteFolder, toggleFolderArchive, reorderFolders, pushFolderTotalCost,
     clearFolderTotalCost, clearFolderPriceHistory,
     getTrades, saveTrade, replaceTrades, deleteTrade, reorderTrades, pushTradePrice,
-    getSavedListings, saveSavedListing, saveSavedListingUnlessDuplicate, deleteSavedListing, deleteSavedListings, pushSavedListingPrice,
+    getSavedListings, saveSavedListingUnlessDuplicate, deleteSavedListing, deleteSavedListings, pushSavedListingPrice,
     updateSavedListingSnapshot, setListingNoResults,
     getSavedGroups, createSavedGroup, renameSavedGroup, setListingGroup, ungroupListings,
     setPendingPriceCapture, getPendingPriceCapture, clearPendingPriceCapture,

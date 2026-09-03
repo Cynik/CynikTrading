@@ -28,6 +28,8 @@
 window.PH = window.PH || {};
 
 PH.prices = (() => {
+  const LOG = (...a) => console.log("[PoE Helper]", ...a);
+
   const ROW = ".resultset > div.row[data-id]";
   const MARK = "ph-priced";
 
@@ -46,17 +48,15 @@ PH.prices = (() => {
   async function loadRate() {
     const game = PH.location.current().version === "2" ? "poe2" : "poe1";
     try {
-      const response = await chrome.runtime.sendMessage({ type: "GET_CURRENCY_RATE", game });
+      const response = await PH.browserAPI.runtime.sendMessage({ type: "GET_CURRENCY_RATE", game });
       if (!response?.ok) {
-        console.log("[PoE Helper] no exchange rate:", response?.error);
+        LOG("no exchange rate:", response?.error);
         return;
       }
       rate = response.data;
-      console.log(
-        `[PoE Helper] 1 divine = ${rate.divineInChaos.toFixed(1)} chaos (${rate.league}, poe.ninja)`
-      );
+      LOG(`1 divine = ${rate.divineInChaos.toFixed(1)} chaos (${rate.league}, poe.ninja)`);
     } catch (err) {
-      console.log("[PoE Helper] rate request failed:", err);
+      LOG("rate request failed:", err);
     }
   }
 
@@ -318,7 +318,7 @@ PH.prices = (() => {
      rather than just its price — for callers that need to read something
      else off that specific row too (PH.saved.capturePendingPrice reads its
      "listed X ago" text). Kept separate rather than having cheapestOnPage
-     itself return the row: that object flows straight into chrome.storage
+     itself return the row: that object flows straight into browser storage
      (PH.store.pushTradePrice/pushSavedListingPrice), and a DOM element
      isn't serializable — mixing the two would risk a silent storage bug
      the moment someone spread the wrong return value into a saved entry. */
@@ -417,15 +417,15 @@ PH.prices = (() => {
        that ever changes). */
     if (priceIndex && priceIndex.game === game) return priceIndex;
     try {
-      const response = await chrome.runtime.sendMessage({ type: "GET_ITEM_PRICE_INDEX", game });
+      const response = await PH.browserAPI.runtime.sendMessage({ type: "GET_ITEM_PRICE_INDEX", game });
       if (!response?.ok) {
-        console.log("[PoE Helper] no item price index:", response?.error);
+        LOG("no item price index:", response?.error);
         return null;
       }
       priceIndex = { ...response.data, game };
       return priceIndex;
     } catch (err) {
-      console.log("[PoE Helper] item price index request failed:", err);
+      LOG("item price index request failed:", err);
       return null;
     }
   }

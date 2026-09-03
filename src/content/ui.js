@@ -9,12 +9,25 @@ window.PH = window.PH || {};
 
 PH.ui = (() => {
   /* el("div", {class: "x", onclick: fn}, "text", childEl) */
+  /* `title` is deliberately never set as the native HTML attribute — the
+     browser's own tooltip takes a noticeably long delay to appear and can
+     render underneath this project's own hover popups (a real complaint:
+     slow to show, looks out of place next to everything else here being
+     styled). Every `title` passed through el() instead wires the same
+     hoverPopup() the rest of the UI already uses for richer hovers (the
+     rate-limit pill, a mod's roll-quality bar, ...) — one mechanism for
+     every hover, so nothing ever competes with a native tooltip for the
+     same trigger. aria-label is still set from `title` (unless a call site
+     already gave its own, more specific one) so screen readers keep the
+     same information a native title attribute would have carried. */
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
+    let tooltip;
     for (const [key, value] of Object.entries(attrs)) {
       if (value == null || value === false) continue;
       if (key === "class") node.className = value;
       else if (key === "text") node.textContent = value;
+      else if (key === "title") tooltip = value;
       else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
       else if (key === "dataset") Object.assign(node.dataset, value);
       else node.setAttribute(key, value === true ? "" : value);
@@ -22,6 +35,10 @@ PH.ui = (() => {
     for (const child of children.flat()) {
       if (child == null || child === false) continue;
       node.append(typeof child === "string" ? document.createTextNode(child) : child);
+    }
+    if (tooltip) {
+      if (!node.hasAttribute("aria-label")) node.setAttribute("aria-label", tooltip);
+      hoverPopup(node, [tooltip]);
     }
     return node;
   }

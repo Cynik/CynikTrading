@@ -10,6 +10,13 @@
      - never keep anything important in a plain variable; it will vanish
    ========================================================================= */
 
+/* See the matching note in store.js — Firefox's `browser.*` is promise-
+   based, its `chrome.*` compat alias isn't, so every `await` below needs
+   whichever global is actually the real one for this browser. The
+   background script is its own execution context, so it gets its own
+   copy of this rather than sharing store.js's (a content script). */
+const browserAPI = globalThis.browser ?? globalThis.chrome;
+
 const LOG = (...args) => console.log("[PoE Helper SW]", ...args);
 
 /* How long we reuse a cached rate before asking poe.ninja again.
@@ -116,7 +123,7 @@ async function fetchCurrencyRates(game) {
 
 async function getCurrencyRate(game) {
   const cacheKey = `rate_${game}`;
-  const stored = await chrome.storage.local.get(cacheKey);
+  const stored = await browserAPI.storage.local.get(cacheKey);
   const cached = stored[cacheKey];
 
   /* Also requires chaosValueByName to be present, not just a fresh
@@ -134,7 +141,7 @@ async function getCurrencyRate(game) {
   }
 
   const fresh = await fetchCurrencyRates(game);
-  await chrome.storage.local.set({ [cacheKey]: fresh });
+  await browserAPI.storage.local.set({ [cacheKey]: fresh });
   LOG("fetched fresh rate for", game, fresh);
   return fresh;
 }
@@ -327,7 +334,7 @@ function normalizeItem(game, it, category, leagueSlug, divineInChaos) {
 
 async function getItemPriceIndex(game) {
   const cacheKey = `itemPrices_${game}`;
-  const stored = await chrome.storage.local.get(cacheKey);
+  const stored = await browserAPI.storage.local.get(cacheKey);
   const cached = stored[cacheKey];
 
   const ageOk = cached && Date.now() - cached.fetchedAt < CACHE_MINUTES * 60 * 1000;
@@ -356,7 +363,7 @@ async function getItemPriceIndex(game) {
   const items = lists.flat();
 
   const fresh = { items, league, fetchedAt: Date.now() };
-  await chrome.storage.local.set({ [cacheKey]: fresh });
+  await browserAPI.storage.local.set({ [cacheKey]: fresh });
   LOG(`fetched ${items.length} item prices (${game}, ${league})`);
   return fresh;
 }
@@ -369,7 +376,7 @@ async function getItemPriceIndex(game) {
    malicious page could use this extension as a proxy with our permissions.
    Build the URL here, from values we control.
    ------------------------------------------------------------------------- */
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+browserAPI.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "GET_CURRENCY_RATE") return; // not ours, ignore
 
   const game = msg.game === "poe2" ? "poe2" : "poe1";
@@ -383,7 +390,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+browserAPI.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "GET_ITEM_PRICE_INDEX") return; // not ours, ignore
 
   const game = msg.game === "poe2" ? "poe2" : "poe1";

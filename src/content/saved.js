@@ -1521,8 +1521,10 @@ PH.saved = (() => {
   /* ------------------------------------------------ search this exact item ---- */
   /*
      "Search this exact item" calls GGG's own trade-search API
-     (pathofexile.com/api/trade/search/<league>) directly and opens the real
-     results — not a prefilled query you still have to finish yourself. This
+     (pathofexile.com/api/trade/search/<league>, or /api/trade2/... for a
+     PoE2 listing — same request/response shape, just the PoE2 host path
+     from location.js's own buildUrl) directly and opens the real results —
+     not a prefilled query you still have to finish yourself. This
      is a deliberate, narrow exception to this project's usual "never touch
      an undocumented endpoint" rule (real precedent from Awakened PoE Trade
      and PoE-Overlay-Community-Fork, confirmed by reading their actual
@@ -1604,8 +1606,35 @@ PH.saved = (() => {
      been tested against — better than guessing at a different rule with
      no evidence for it either way. A group of one behaves exactly as
      before (its own id, its own value, unchanged). */
+  /* A "N% reduced X" mod's rendered text carries no sign (modRollValue only
+     ever reads a plain positive number off it — see modLines), but stat
+     filters are always framed in the positive on the trade site too
+     ("increased"/"reduced" share one underlying stat id, and it's the
+     numeric value's own sign that says which), so a reduced roll needs to
+     go to GGG's search as a negative number or it's asking for the exact
+     opposite of what's on the item — the bug a real screenshot caught
+     ("34% reduced Presence Area of Effect" filtered as min=max=34 instead
+     of -34). mod.range (see parseModRoll) already carries the real signed
+     bounds straight from GGG's own display (e.g. [-40, -20] for a reduced
+     stat), so a value that only fits the range once negated is flipped —
+     same technique modQuality below already uses for the compare modal's
+     roll-quality bar, pulled out here so both places (and both games —
+     this is DOM-driven, not PoE1/PoE2-specific) share one fix instead of
+     two copies drifting apart. A mod with no captured range (a legacy
+     saved listing from before range was tracked) is left as-is — nothing
+     to compare its sign against, same as before this fix. */
+  function signedModValue(mod) {
+    const { value, range } = mod;
+    if (value == null || !range) return value;
+    if (value >= range.min && value <= range.max) return value;
+    if (-value >= range.min && -value <= range.max) return -value;
+    return value;
+  }
+
   function buildStatFilters(mods) {
-    const eligible = mods.filter((mod) => typeof mod === "object" && mod?.id && mod.value != null);
+    const eligible = mods
+      .filter((mod) => typeof mod === "object" && mod?.id && mod.value != null)
+      .map((mod) => ({ ...mod, value: signedModValue(mod) }));
 
     const byHash = new Map();
     for (const mod of eligible) {
@@ -1625,10 +1654,6 @@ PH.saved = (() => {
 
   async function rebuildSearch(listing) {
     const version = listing.location?.version ?? "1";
-    if (version !== "1") {
-      toast("Rebuild via search isn't available for PoE2 yet.", { error: true });
-      return;
-    }
 
     const league = listing.league;
     if (!league) {
@@ -1741,8 +1766,8 @@ PH.saved = (() => {
       resultTab.document.close();
     }
 
-    const result = await searchTrade(request, league);
-    if (!result) {
+    const result = await searchTrade(request, league, version);
+    if (!result || result.error) {
       /* Used to silently navigate this tab to a blank new-search page —
          a real report ("sometimes it breaks if you click it a second
          time, producing nothing in the search window") turned out to be
@@ -1750,16 +1775,20 @@ PH.saved = (() => {
          network error, ...) lands in the *original* tab, not this new
          one, so if this is the tab you're actually looking at (the usual
          case, since it's the one that just opened), there was nothing at
-         all explaining why it's empty. Still same-origin at this point
-         (about:blank, never navigated anywhere yet), so writing a real
-         message straight into it is safe — same as the dark-background
-         write above. */
+         all explaining why it's empty. A later report showed even
+         pointing at the original tab isn't enough — its toast auto-
+         dismisses well before you've switched back to look for it — so
+         searchTrade's own error message (see its own return there) is
+         shown directly here now, not just a generic pointer to go find
+         it elsewhere. Still same-origin at this point (about:blank, never
+         navigated anywhere yet), so writing a real message straight into
+         it is safe — same as the dark-background write above. */
       if (resultTab) {
         resultTab.document.write(`
           <meta charset="utf-8">
           <body style="background:#1c1f26;margin:0;color:#c9ccd3;font:14px sans-serif;padding:32px;line-height:1.6">
             <p>Search this exact item didn't go through.</p>
-            <p>Check the original tab for why (rate limited, a network error, ...) and try again from there.</p>
+            <p>${result?.error ?? "Check the original tab for why (rate limited, a network error, ...) and try again from there."}</p>
           </body>
         `);
         resultTab.document.close();
@@ -1777,7 +1806,7 @@ PH.saved = (() => {
       /* Fire-and-forget, not awaited — see the note above
          fetchListingHeaders for why this call exists and why its own
          result never affects anything else this click does. */
-      fetchListingHeaders(result.ids.slice(0, 1), result.id);
+      fetchListingHeaders(result.ids.slice(0, 1), result.id, version);
     }
 
     const url = PH.location.buildUrl({ version, type: "search", slug: result.id }, league);
@@ -1803,18 +1832,37 @@ PH.saved = (() => {
   /* POSTs one search to GGG's trade API and returns { id, total, ids }
      (ids being the matched listings' own ids, cheapest first per this
      request's own sort — see rebuildSearch's request.sort — for
-     fetchListingHeaders below to use), or null (with a toast already
-     shown) on any failure — cooldown refusal, a network error, a non-2xx
-     response, or a malformed one. */
-  async function searchTrade(request, league) {
+     fetchListingHeaders below to use) on success, or { error: <message> }
+     on any failure — cooldown refusal, a network error, a non-2xx
+     response, or a malformed one. error is the same text the toast below
+     shows, just also handed back to the caller — a real report showed the
+     toast alone isn't enough, since it lands in this (the original) tab
+     while rebuildSearch's caller is usually already looking at the new
+     results tab it just opened, and a toast that's dismissed by the time
+     you switch back leaves nothing explaining why the search failed. */
+  async function searchTrade(request, league, version) {
     const cooldown = await PH.store.getTradeSearchCooldown();
     if (cooldown && Date.now() < cooldown) {
       const waitSec = Math.ceil((cooldown - Date.now()) / 1000);
-      toast(`Rate limited by the trade site — try again in ${waitSec}s.`, { error: true });
-      return null;
+      const error = `Rate limited by the trade site — try again in ${waitSec}s.`;
+      toast(error, { error: true });
+      return { error };
     }
 
-    const url = `${TRADE_API_HOST}/api/trade/search/${encodeURIComponent(league)}`;
+    const base = version === "2" ? "trade2" : "trade";
+    /* league can be "poe2/Standard" (or "xbox/Legion") — a real "/" separating
+       the realm segment from the league name (see location.js's parsePath).
+       Plain encodeURIComponent(league) would escape that "/" to "%2F",
+       collapsing what the trade API expects as two path segments into one
+       malformed one — never triggered for PoE1 on PC (no realm prefix, so
+       identical output to before) but broke every PoE2 search. Splitting on
+       "/" first and encoding each part on its own fixes that without
+       touching how a slash-free PoE1 league name gets encoded — deliberately
+       not reusing PH.location.encodeSegment here, since that also un-escapes
+       "(" / ")" for the web-navigation URL buildUrl produces, an assumption
+       confirmed for that URL but not for this POST endpoint. */
+    const leaguePath = league.split("/").map(encodeURIComponent).join("/");
+    const url = `${TRADE_API_HOST}/api/${base}/search/${leaguePath}`;
     let response;
     try {
       response = await fetch(url, {
@@ -1823,8 +1871,9 @@ PH.saved = (() => {
         body: JSON.stringify(request),
       });
     } catch {
-      toast("Couldn't reach the trade site's search API.", { error: true });
-      return null;
+      const error = "Couldn't reach the trade site's search API.";
+      toast(error, { error: true });
+      return { error };
     }
 
     const rateData = parseRateLimitHeaders(response.headers);
@@ -1836,19 +1885,18 @@ PH.saved = (() => {
     }
 
     if (!response.ok) {
-      toast(
-        response.status === 429
-          ? "Rate limited by the trade site — try again shortly."
-          : `Trade search failed (HTTP ${response.status}).`,
-        { error: true }
-      );
-      return null;
+      const error = response.status === 429
+        ? "Rate limited by the trade site — try again shortly."
+        : `Trade search failed (HTTP ${response.status}).`;
+      toast(error, { error: true });
+      return { error };
     }
 
     const data = await response.json().catch(() => null);
     if (!data?.id) {
-      toast("Trade search returned no results id.", { error: true });
-      return null;
+      const error = "Trade search returned no results id.";
+      toast(error, { error: true });
+      return { error };
     }
     return { id: data.id, total: data.total ?? 0, ids: data.result ?? [] };
   }
@@ -1890,14 +1938,15 @@ PH.saved = (() => {
      (APT's pathofexile-trade.ts) includes it, and there's no confirmed
      evidence this endpoint behaves the same without it, so this matches
      the verified shape rather than guessing it's safe to drop. */
-  async function fetchListingHeaders(ids, searchId) {
+  async function fetchListingHeaders(ids, searchId, version) {
     if (!ids.length) return;
     const cooldown = await PH.store.getTradeFetchCooldown();
     if (cooldown && Date.now() < cooldown) return;
 
+    const base = version === "2" ? "trade2" : "trade";
     let response;
     try {
-      response = await fetch(`${TRADE_API_HOST}/api/trade/fetch/${ids.join(",")}?query=${encodeURIComponent(searchId)}`);
+      response = await fetch(`${TRADE_API_HOST}/api/${base}/fetch/${ids.join(",")}?query=${encodeURIComponent(searchId)}`);
     } catch {
       return;
     }
@@ -2422,15 +2471,11 @@ PH.saved = (() => {
     if (!mod.range || mod.value == null) return null;
     const { min, max } = mod.range;
     if (max === min) return null;
-    /* A "N% reduced X" mod's rendered text carries no sign (modRollValue
-       reads a plain positive percentage), but GGG's own range hint next
-       to it shows the actual underlying roll, which is negative for a
-       reduced stat (e.g. value 31 alongside a [-40, -20] range). Flip
-       the parsed value's sign when that's the only way it lands inside
-       its own range, so a reduced-stat mod doesn't clamp to a flat 100%
-       every time. */
-    let value = mod.value;
-    if ((value < min || value > max) && -value >= min && -value <= max) value = -value;
+    /* signedModValue (see buildStatFilters above) flips a "N% reduced X"
+       mod's parsed-positive value negative when that's the only way it
+       lands inside its own range — the same correction this bar needs so
+       a reduced-stat mod doesn't clamp to a flat 100% every time. */
+    const value = signedModValue(mod);
     const pct = ((value - min) / (max - min)) * 100;
     return Math.max(0, Math.min(100, Math.round(pct)));
   }
@@ -2517,6 +2562,89 @@ PH.saved = (() => {
     return text.replace(/-?\d[\d,]*\.?\d*/g, "#").trim();
   }
 
+  /* The shared engine behind all eight modXxx/propXxx counting functions
+     below (modShareCounts/modBestValues/modUniformValues/modStarCounts and
+     their prop* counterparts) — mods and properties get IDENTICAL
+     treatment (how many listings carry each distinct one, the highest
+     value seen for it, whether every carrier agrees on that value, and
+     how many of a listing's own entries earn compareModCell/
+     comparePropertyCell's star), just over different entry lists, key
+     functions, and eligibility rules, so the counting logic itself lives
+     here once rather than twice. Each modXxx/propXxx function below is a
+     thin wrapper supplying its own `entriesFn` (which array a listing's
+     entries come from — `mods`, or propEntries' combined properties+
+     additionalStats), `keyFn` (modKey vs propKey), and `filterFn` (which
+     entries are even eligible — mods restrict share/uniform/star
+     differently by kind, see each wrapper's own note; properties have no
+     such distinction and mostly pass everything through). Every filterFn
+     below is a literal translation of that function's original standalone
+     condition, not a simplified rewrite, so behavior is unchanged. */
+  function entryShareCounts(members, entriesFn, keyFn, filterFn) {
+    const counts = new Map();
+    for (const listing of members) {
+      const seen = new Set();
+      for (const entry of entriesFn(listing)) {
+        if (!filterFn(entry)) continue;
+        const key = keyFn(entry);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  function entryBestValues(members, entriesFn, keyFn, filterFn) {
+    const best = new Map();
+    for (const listing of members) {
+      for (const entry of entriesFn(listing)) {
+        if (!filterFn(entry)) continue;
+        const key = keyFn(entry);
+        if (!best.has(key) || entry.value > best.get(key)) best.set(key, entry.value);
+      }
+    }
+    return best;
+  }
+
+  function entryUniformValues(members, entriesFn, keyFn, filterFn) {
+    const DIFFERS = Symbol("differs");
+    const seen = new Map();
+    for (const listing of members) {
+      const countedKeys = new Set();
+      for (const entry of entriesFn(listing)) {
+        if (!filterFn(entry)) continue;
+        const key = keyFn(entry);
+        if (countedKeys.has(key)) continue;
+        countedKeys.add(key);
+        const rep = entry.value ?? null;
+        if (!seen.has(key)) seen.set(key, rep);
+        else if (seen.get(key) !== DIFFERS && seen.get(key) !== rep) seen.set(key, DIFFERS);
+      }
+    }
+    const uniform = new Map();
+    for (const [key, rep] of seen) uniform.set(key, rep !== DIFFERS);
+    return uniform;
+  }
+
+  function entryStarCounts(members, shareCounts, bestValues, uniformValues, entriesFn, keyFn, filterFn) {
+    const counts = new Map();
+    for (const listing of members) {
+      let count = 0;
+      const countedKeys = new Set();
+      for (const entry of entriesFn(listing)) {
+        if (!filterFn(entry)) continue;
+        const key = keyFn(entry);
+        if (countedKeys.has(key)) continue;
+        countedKeys.add(key);
+        const shareCount = shareCounts.get(key) ?? 0;
+        const isUniform = shareCount === members.length && uniformValues.get(key) === true;
+        if (!isUniform && shareCount >= 2 && entry.value === bestValues.get(key)) count++;
+      }
+      counts.set(listing.id, count);
+    }
+    return counts;
+  }
+
   /* How many of `members` carry each distinct mod — used to highlight a
      mod line wherever it recurs across the compared items, rather than
      forcing every column into a shared row grid (see openCompareModal):
@@ -2527,19 +2655,11 @@ PH.saved = (() => {
      than useful alignment. Each listing now lists only its own mods, and
      this highlights the ones worth noticing instead. Counts each distinct
      mod once per listing even if it somehow appears twice on the same
-     one. */
+     one. No kind filter — every mod (implicit, crafted, explicit, ...)
+     counts toward this, even though only explicit mods ever actually get
+     starred/bordered off it (see compareModCell's own isExplicit gate). */
   function modShareCounts(members) {
-    const counts = new Map();
-    for (const listing of members) {
-      const seen = new Set();
-      for (const mod of listing.mods ?? []) {
-        const key = modKey(mod);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-    }
-    return counts;
+    return entryShareCounts(members, (l) => l.mods ?? [], modKey, () => true);
   }
 
   /* The highest rolled `value` seen for each distinct shared mod, across
@@ -2551,15 +2671,7 @@ PH.saved = (() => {
      magnitude from) has no real "highest" to single out, so it's left
      out of this map entirely. */
   function modBestValues(members) {
-    const best = new Map();
-    for (const listing of members) {
-      for (const mod of listing.mods ?? []) {
-        if (typeof mod !== "object" || mod.value == null) continue;
-        const key = modKey(mod);
-        if (!best.has(key) || mod.value > best.get(key)) best.set(key, mod.value);
-      }
-    }
-    return best;
+    return entryBestValues(members, (l) => l.mods ?? [], modKey, (mod) => typeof mod === "object" && mod.value != null);
   }
 
   /* How many of a listing's own explicit mods would earn compareModCell's
@@ -2571,22 +2683,11 @@ PH.saved = (() => {
      uniformValues) so the column border and the individual mod stars can
      never disagree about which mods actually won. */
   function modStarCounts(members, shareCounts, bestValues, uniformValues) {
-    const counts = new Map();
-    for (const listing of members) {
-      let count = 0;
-      const countedKeys = new Set();
-      for (const mod of listing.mods ?? []) {
-        if (typeof mod !== "object" || mod.kind !== "explicit" || mod.value == null) continue;
-        const key = modKey(mod);
-        if (countedKeys.has(key)) continue;
-        countedKeys.add(key);
-        const shareCount = shareCounts.get(key) ?? 0;
-        const isUniform = shareCount === members.length && uniformValues.get(key) === true;
-        if (!isUniform && shareCount >= 2 && mod.value === bestValues.get(key)) count++;
-      }
-      counts.set(listing.id, count);
-    }
-    return counts;
+    return entryStarCounts(
+      members, shareCounts, bestValues, uniformValues,
+      (l) => l.mods ?? [], modKey,
+      (mod) => typeof mod === "object" && mod.kind === "explicit" && mod.value != null
+    );
   }
 
   /* A listing's own properties AND additionalStats as one combined list
@@ -2627,31 +2728,13 @@ PH.saved = (() => {
   /* Same idea as modShareCounts — how many of `members` carry each
      distinct property/additionalStat, deduped per listing. */
   function propShareCounts(members) {
-    const counts = new Map();
-    for (const listing of members) {
-      const seen = new Set();
-      for (const prop of propEntries(listing)) {
-        const key = propKey(prop);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-    }
-    return counts;
+    return entryShareCounts(members, propEntries, propKey, () => true);
   }
 
   /* Same idea as modBestValues — the highest value seen for each
      distinct shared property, across `members`. */
   function propBestValues(members) {
-    const best = new Map();
-    for (const listing of members) {
-      for (const prop of propEntries(listing)) {
-        if (prop.value == null) continue;
-        const key = propKey(prop);
-        if (!best.has(key) || prop.value > best.get(key)) best.set(key, prop.value);
-      }
-    }
-    return best;
+    return entryBestValues(members, propEntries, propKey, (prop) => prop.value != null);
   }
 
   /* Same idea as modUniformValues — whether every listing carrying a
@@ -2662,22 +2745,7 @@ PH.saved = (() => {
      "nothing to compare here" on a property — reused for both
      comparePropertyCell's click-to-sort gate and its own star. */
   function propUniformValues(members) {
-    const DIFFERS = Symbol("differs");
-    const seen = new Map();
-    for (const listing of members) {
-      const countedKeys = new Set();
-      for (const prop of propEntries(listing)) {
-        const key = propKey(prop);
-        if (countedKeys.has(key)) continue;
-        countedKeys.add(key);
-        const rep = prop.value ?? null;
-        if (!seen.has(key)) seen.set(key, rep);
-        else if (seen.get(key) !== DIFFERS && seen.get(key) !== rep) seen.set(key, DIFFERS);
-      }
-    }
-    const uniform = new Map();
-    for (const [key, rep] of seen) uniform.set(key, rep !== DIFFERS);
-    return uniform;
+    return entryUniformValues(members, propEntries, propKey, () => true);
   }
 
   /* Same idea as modStarCounts — how many of a listing's own properties
@@ -2691,23 +2759,11 @@ PH.saved = (() => {
      sortable (see comparePropertyCell's own isSpecial gate on
      clickable/dir, not on this). */
   function propStarCounts(members, shareCounts, bestValues, uniformValues) {
-    const counts = new Map();
-    for (const listing of members) {
-      let count = 0;
-      const countedKeys = new Set();
-      for (const prop of propEntries(listing)) {
-        if (prop.value == null) continue;
-        if (SPECIAL_PROPERTIES.test(prop.text)) continue;
-        const key = propKey(prop);
-        if (countedKeys.has(key)) continue;
-        countedKeys.add(key);
-        const shareCount = shareCounts.get(key) ?? 0;
-        const isUniform = shareCount === members.length && uniformValues.get(key) === true;
-        if (!isUniform && shareCount >= 2 && prop.value === bestValues.get(key)) count++;
-      }
-      counts.set(listing.id, count);
-    }
-    return counts;
+    return entryStarCounts(
+      members, shareCounts, bestValues, uniformValues,
+      propEntries, propKey,
+      (prop) => prop.value != null && !SPECIAL_PROPERTIES.test(prop.text)
+    );
   }
 
   /* The id(s) tied for the lowest chaos-equivalent price among `members`
@@ -2788,23 +2844,7 @@ PH.saved = (() => {
      so a listing that somehow carries the same mod twice can't register
      a false "differs" against itself. */
   function modUniformValues(members) {
-    const DIFFERS = Symbol("differs");
-    const seen = new Map();
-    for (const listing of members) {
-      const countedKeys = new Set();
-      for (const mod of listing.mods ?? []) {
-        if (typeof mod !== "object" || mod.kind !== "explicit") continue;
-        const key = modKey(mod);
-        if (countedKeys.has(key)) continue;
-        countedKeys.add(key);
-        const rep = mod.value ?? null;
-        if (!seen.has(key)) seen.set(key, rep);
-        else if (seen.get(key) !== DIFFERS && seen.get(key) !== rep) seen.set(key, DIFFERS);
-      }
-    }
-    const uniform = new Map();
-    for (const [key, rep] of seen) uniform.set(key, rep !== DIFFERS);
-    return uniform;
+    return entryUniformValues(members, (l) => l.mods ?? [], modKey, (mod) => typeof mod === "object" && mod.kind === "explicit");
   }
 
   /* mod.kind === "pseudo" is the real signal (see modLines) — the
@@ -3233,7 +3273,7 @@ PH.saved = (() => {
            listing itself. */
         const footer = el("div", { class: `ph-compare-col-footer ${borderClass}`.trim() },
           button("Find Item", {
-            title: "Search the trade site directly for this item's name and rolled mods",
+            title: "Search the trade site directly for this item's name and rolled mods — GGG rate-limits this strictly, so repeated clicks in quick succession will get refused or blocked",
             onClick: () => rebuildSearch(listing),
           }),
           bookmarkButton(listing, folders)
@@ -3588,7 +3628,7 @@ PH.saved = (() => {
     /* listedAt (when the trade site says the item was listed) rather than
        savedAt (when you clicked Save Listing) — listings saved before
        listedAt existed fall back to savedAt, the only time they have. */
-    const metaBits = [listing.seller, league, timeAgo(listing.listedAt ?? listing.savedAt)].filter(Boolean);
+    const metaBits = [listing.seller, PH.location.displayLeague(league), timeAgo(listing.listedAt ?? listing.savedAt)].filter(Boolean);
     body.append(el("div", { class: "ph-saved-meta", text: metaBits.join(" · ") }));
 
     if (listing.unidentified) {
@@ -3652,7 +3692,7 @@ PH.saved = (() => {
             }, PH.ui.icon("refresh"))
           : null,
         PH.ui.iconButton(PH.ui.icon("search"), {
-          title: "Search the trade site directly for this item's name and rolled mods",
+          title: "Search the trade site directly for this item's name and rolled mods — GGG rate-limits this strictly, so repeated clicks in quick succession will get refused or blocked",
           onClick: () => rebuildSearch(listing),
         }),
         bookmarkButton(listing, context.folders, { iconOnly: true }),

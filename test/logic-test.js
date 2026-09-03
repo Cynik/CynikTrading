@@ -214,13 +214,13 @@ check("lastSeenLeagues updated on a new league", (await PH.store.getLastSeenLeag
 
 console.log("\n== saved listings ==");
 check("starts empty", (await PH.store.getSavedListings()).length===0);
-const s1 = await PH.store.saveSavedListing({
+const s1 = await PH.store.saveSavedListingUnlessDuplicate({
   title:"Windripper", price:"40 divine", seller:"someSeller", league:"Settlers",
   mods:["+47 to maximum Life", "23% increased Cast Speed"],
   location:{version:"1",type:"search",slug:"sl1"},
-});
+}, () => false);
 check("id and savedAt assigned", Boolean(s1.id) && typeof s1.savedAt==="string");
-await PH.store.saveSavedListing({title:"Second one", location:{version:"1",type:"search",slug:"sl2"}});
+await PH.store.saveSavedListingUnlessDuplicate({title:"Second one", location:{version:"1",type:"search",slug:"sl2"}}, () => false);
 let saved = await PH.store.getSavedListings();
 check("two saved listings", saved.length===2);
 check("newest first", saved[0].title==="Second one");

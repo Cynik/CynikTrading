@@ -73,7 +73,15 @@ PH.icons = (() => {
     el.className = "ph-icon ph-icon-mono";
     el.textContent = label(slug);
     el.style.background = COLORS[slug] ?? "#3a4048";
-    if (slug) el.title = prettyName(slug);
+    /* PH.ui.hoverPopup, not the native title attribute — see the note
+       above ui.js's own el() for why every tooltip in this project goes
+       through that one mechanism instead. icons.js loads before ui.js
+       (manifest.json's own script order), but PH.ui is only read here at
+       call time, well after every content script has finished loading. */
+    if (slug) {
+      el.setAttribute("aria-label", prettyName(slug));
+      PH.ui.hoverPopup(el, [prettyName(slug)]);
+    }
     return el;
   }
 
@@ -84,9 +92,10 @@ PH.icons = (() => {
 
     const img = document.createElement("img");
     img.className = "ph-icon";
-    img.src = chrome.runtime.getURL(`src/assets/icons/bookmark-folder/${slug}.png`);
+    img.src = PH.browserAPI.runtime.getURL(`src/assets/icons/bookmark-folder/${slug}.png`);
     img.alt = "";
-    img.title = prettyName(slug);
+    img.setAttribute("aria-label", prettyName(slug));
+    PH.ui.hoverPopup(img, [prettyName(slug)]);
     img.onerror = () => img.replaceWith(monogramBadge(slug));
     return img;
   }

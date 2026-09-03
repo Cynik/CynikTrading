@@ -37,7 +37,7 @@
       policy rather than guessing which one a bookmarked search's own page
       load actually draws from.
 
-   Both persist to chrome.storage (PH.store.tradeRateState/tradeLinkClicks)
+   Both persist to browser storage (PH.store.tradeRateState/tradeLinkClicks)
    so a fresh page load — which is exactly what happens after a bookmark
    click — still has real numbers to decay from and real clicks to count,
    not just whatever this tab's own in-memory state happened to see.

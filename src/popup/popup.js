@@ -1,6 +1,13 @@
 /* The popup is only settings now — bookmarks moved into the in-page panel.
    It's destroyed the moment you click away, so it reads fresh every time. */
 
+/* See the matching note in store.js — Firefox's `browser.*` is promise-
+   based, its `chrome.*` compat alias isn't, so every `await` below needs
+   whichever global is actually the real one for this browser. The popup is
+   its own execution context (not a content script), so it gets its own
+   copy of this rather than sharing store.js's. */
+const browserAPI = window.browser ?? window.chrome;
+
 const rateEl = document.getElementById("rate");
 const tildeBox = document.getElementById("tilde");
 const pricesBox = document.getElementById("prices");
@@ -9,7 +16,7 @@ const sortBox = document.getElementById("sort");
 const DEFAULTS = { tildePrefix: true, showPriceConversion: true, sortByTruePrice: true };
 
 async function getSettings() {
-  const { settings = {} } = await chrome.storage.local.get("settings");
+  const { settings = {} } = await browserAPI.storage.local.get("settings");
   return { ...DEFAULTS, ...settings };
 }
 
@@ -33,7 +40,7 @@ async function bindToggle(box, key) {
   box.addEventListener("change", () => serialize(async () => {
     const current = await getSettings();
     current[key] = box.checked;
-    await chrome.storage.local.set({ settings: current });
+    await browserAPI.storage.local.set({ settings: current });
   }));
 }
 
@@ -43,7 +50,7 @@ async function bindToggle(box, key) {
    that module). Falls back to poe1 if the active tab isn't a trade page. */
 async function activeGame() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await browserAPI.tabs.query({ active: true, currentWindow: true });
     const path = tab?.url ? new URL(tab.url).pathname : "";
     return path.startsWith("/trade2") ? "poe2" : "poe1";
   } catch {
@@ -62,7 +69,7 @@ async function activeGame() {
 async function showRate() {
   try {
     const game = await activeGame();
-    const res = await chrome.runtime.sendMessage({ type: "GET_CURRENCY_RATE", game });
+    const res = await browserAPI.runtime.sendMessage({ type: "GET_CURRENCY_RATE", game });
     if (!res?.ok) {
       rateEl.textContent = "Exchange rate unavailable";
       return;

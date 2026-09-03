@@ -26,7 +26,7 @@ PH.panel = (() => {
   let currentTab = "bookmarks";
   const renderers = {}; // tab id -> function(container)
 
-  /* Tab renderers are async (they read from chrome.storage). A single store
+  /* Tab renderers are async (they read from browser storage). A single store
      write can trigger refresh() twice in quick succession — once directly,
      once more from the storage.onChanged listener reacting to that same
      write — so two renders can be in flight at once. If both appended
@@ -50,7 +50,7 @@ PH.panel = (() => {
     const chevron = root.querySelector(".ph-collapse");
     if (chevron) {
       chevron.textContent = collapsed ? "‹" : "›";
-      chevron.title = collapsed ? "Show panel" : "Hide panel";
+      chevron.setAttribute("aria-label", collapsed ? "Show panel" : "Hide panel");
       chevron.setAttribute("aria-expanded", String(!collapsed));
     }
 
@@ -110,6 +110,13 @@ PH.panel = (() => {
       type: "button",
       onclick: () => setCollapsed(!isCollapsed()),
     });
+    /* Wired once here, not via a `title` set on el() above — this button's
+       own label flips ("Show panel"/"Hide panel") every toggle, and
+       hoverPopup only re-reads a `lines` function fresh on each hover, not
+       on every DOM mutation, so setCollapsed below just updates textContent/
+       aria-expanded and leaves this alone rather than re-wiring a fresh
+       hoverPopup (and a fresh, stacked set of listeners) on every click. */
+    PH.ui.hoverPopup(collapse, () => [isCollapsed() ? "Show panel" : "Hide panel"]);
     const title = el("div", { class: "ph-title", text: "Trade Helper" });
 
     /* Always visible, like Awakened PoE Trade's own rate-limit indicator —

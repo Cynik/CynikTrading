@@ -107,5 +107,19 @@ PH.location = (() => {
     return lastSeenLeagues?.[location.version] ?? null;
   }
 
-  return { current, parsePath, parseUrl, buildUrl, resolveLeague };
+  /* league's own "poe2/Standard"/"xbox/Legion" shape (see parsePath above)
+     is what buildUrl/the trade-search API both need — the realm segment is
+     load-bearing there, not decoration. Showing that same string to a
+     person reads as a stray "poe2/" prefix on the league name, though (a
+     real report), so this strips it back off for anywhere the league is
+     just being displayed, never for a value headed into a URL or API
+     call. */
+  function displayLeague(league) {
+    if (!league) return league;
+    const slash = league.indexOf("/");
+    if (slash === -1) return league;
+    return REALMS.includes(league.slice(0, slash)) ? league.slice(slash + 1) : league;
+  }
+
+  return { current, parsePath, parseUrl, buildUrl, resolveLeague, displayLeague };
 })();

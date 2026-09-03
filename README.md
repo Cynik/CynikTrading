@@ -36,7 +36,9 @@ league if you want (rename it and tick the box).
 
 ## Install (development)
 
-Works in any Chromium browser — Opera GX, Chrome, Edge, Brave.
+Works in any Chromium browser — Opera GX, Chrome, Edge, Brave — and in Firefox.
+
+**Chromium browsers**
 
 1. Open the extensions page: `opera://extensions` in Opera GX (or
    Ctrl+Shift+E), `chrome://extensions` in Chrome or Edge
@@ -50,6 +52,19 @@ No Chrome Web Store account or "Install Chrome Extensions" addon is needed —
 loading unpacked bypasses the store entirely.
 
 After editing files: reload the extension card on the extensions page, then
+reload the trade page.
+
+**Firefox**
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on…** and pick `manifest.json` inside this
+   folder
+3. Open the trade site. The panel appears the same way it does on Chromium.
+
+A temporary add-on unloads when Firefox closes, so this step needs repeating
+each session — that's Firefox's own limitation for unpacked/unsigned
+extensions, not something this project can skip around. After editing files,
+click **Reload** next to the add-on on the same `about:debugging` page, then
 reload the trade page.
 
 ## Moving over from Better Trading

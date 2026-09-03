@@ -451,7 +451,7 @@ PH.bookmarks = (() => {
           el("span", { class: "ph-trade-title", text: trade.title }),
           priceGroup,
           avgBadge,
-          trade.location.league ? el("span", { class: "ph-pin-badge", text: trade.location.league, title: "Pinned to this league" }) : null
+          trade.location.league ? el("span", { class: "ph-pin-badge", text: PH.location.displayLeague(trade.location.league), title: "Pinned to this league" }) : null
         )
       /* No league known yet — usually because you opened /trade with no
          league in the URL. Say so rather than rendering a dead link. */
@@ -561,7 +561,7 @@ PH.bookmarks = (() => {
           pinLeague = e.target.checked ? (PH.location.current().league ?? "") : "";
         },
       }),
-      el("span", { text: `Always open in ${PH.location.current().league ?? "this league"}` })
+      el("span", { text: `Always open in ${PH.location.displayLeague(PH.location.current().league) ?? "this league"}` })
     );
 
     const form = inlineForm({
@@ -595,7 +595,7 @@ PH.bookmarks = (() => {
 
     return button(canSave ? "＋ Register current trade" : "Run a search to save it", {
       class: `ph-btn ph-register ${canSave ? "" : "ph-btn-disabled"}`.trim(),
-      title: canSave ? `${page.type} · ${page.league} · ${page.slug}` : "Open a trade search first",
+      title: canSave ? `${page.type} · ${PH.location.displayLeague(page.league)} · ${page.slug}` : "Open a trade search first",
       onClick: () => {
         if (!canSave) {
           toast("Run a search first — there's no search URL to save yet.", { error: true });
@@ -628,7 +628,7 @@ PH.bookmarks = (() => {
     });
 
     return el("div", { class: "ph-editor" },
-      el("div", { class: "ph-editor-note", text: `${page.type} · ${page.league}` }),
+      el("div", { class: "ph-editor-note", text: `${page.type} · ${PH.location.displayLeague(page.league)}` }),
       form
     );
   }
