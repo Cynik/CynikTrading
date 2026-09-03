@@ -279,10 +279,20 @@ window.PH = window.PH || {};
    callback. Firefox does provide a `chrome.*` alias too, but it's
    callback-only there, so an `await chrome.storage.local.get(...)` call
    (the shape used throughout this file) would silently get back
-   `undefined` instead of the real result. Resolving to whichever global
-   actually exists once, here, keeps every `await PH.browserAPI....` call
-   below correct on both browsers without a bundled polyfill. */
-PH.browserAPI = window.browser ?? window.chrome;
+   `undefined` instead of the real result.
+
+   Read as the bare `browser`/`chrome` identifier, NOT `window.browser`/
+   `window.chrome` — confirmed live (real console error: "PH.browserAPI is
+   undefined") that in a Firefox CONTENT SCRIPT specifically, `window` is
+   the actual page's window object, which never has `browser` attached to
+   it; Firefox injects `browser` into the content script's own scope as a
+   bare global instead, reachable directly but not through `window`. Chrome
+   attaches `chrome` onto the content script's `window` too, so `window.
+   chrome` would have kept working there, but relying on `window.` at all
+   was the bug on Firefox. `typeof browser` (rather than a bare reference)
+   avoids a ReferenceError on Chrome, where no global named `browser`
+   exists at all. */
+PH.browserAPI = typeof browser !== "undefined" ? browser : chrome;
 
 PH.store = (() => {
   const LOG = (...a) => console.log("[PoE Helper store]", ...a);
@@ -332,10 +342,30 @@ PH.store = (() => {
      runs its whole body inside this — including migrateLegacyBookmarks,
      where serializing is what stops two tabs racing to import the same
      legacy `bookmarks` array twice: whichever runs second sees the first
-     one's PH.browserAPI.storage.local.remove("bookmarks") already happened. */
+     one's PH.browserAPI.storage.local.remove("bookmarks") already happened.
+
+     navigator.locks is deliberately skipped on Firefox specifically —
+     confirmed live (a real "Permission denied to access property 'then'"
+     thrown from inside migrateLegacyBookmarks, the very first withLock
+     call boot() makes) that Firefox's Xray wrappers can't safely let
+     navigator.locks (a page-realm API; content scripts share the page's
+     own `navigator`, not an extension-private one) chain onto a promise
+     that resolves via the privileged browser.storage API — a known class
+     of Firefox content-script bug, not specific to this one call. Chrome's
+     extension model doesn't wall content scripts off from page objects
+     the same way, so it keeps the real cross-tab lock; Firefox falls back
+     to the same in-module chain the test harness already uses, which
+     still serializes everything within one tab — losing only the
+     cross-tab race protection for the rare case of two Firefox tabs on
+     the trade site racing the exact same write. typeof browser !==
+     "undefined" is the same Firefox-detection already used for
+     PH.browserAPI above — a content script is the only context this
+     runs in, so there's no background/popup case to also worry about
+     here. */
   let writeChain = Promise.resolve();
   function withLock(fn) {
-    if (typeof navigator !== "undefined" && navigator.locks?.request) {
+    const isFirefox = typeof browser !== "undefined";
+    if (!isFirefox && typeof navigator !== "undefined" && navigator.locks?.request) {
       return navigator.locks.request("ph-store-mutate", fn);
     }
     const result = writeChain.then(fn, fn);

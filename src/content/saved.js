@@ -1758,12 +1758,30 @@ PH.saved = (() => {
 
     /* about:blank's default background is plain white, which flashes
        bright against everything else here being dark for however long the
-       search takes to come back. Same origin as this tab (we just opened
-       it ourselves), so writing a dark background straight into it before
-       navigating away is safe — no CORS/cross-origin restriction applies. */
+       search takes to come back. Same origin as this tab in Chrome (we
+       just opened it ourselves), so writing a dark background straight
+       into it before navigating away is safe there — no CORS/cross-origin
+       restriction applies. Firefox is the real exception, not "every
+       browser": confirmed live (a real SecurityError, "Permission denied
+       to access property 'document' on cross-origin object") that a
+       content script's own window.open("about:blank") gets a window
+       Firefox treats as cross-origin to the content script specifically —
+       a known Firefox bug (Bugzilla #1387109), not a mistake in this
+       code — even though it's genuinely same-origin, and even though a
+       normal (non-extension) page script opening the exact same
+       about:blank window would never hit this. try/catch rather than a
+       Firefox version check: this is the only thing in this whole flow
+       .document access ever touches, so swallowing just this one failure
+       is simpler and more robust than detecting Firefox up front, and it
+       degrades harmlessly — plain about:blank instead of the dark
+       background — while everything past this point in the function
+       (the actual search, the eventual real navigation) is untouched by
+       it either way. */
     if (resultTab) {
-      resultTab.document.write('<meta charset="utf-8"><body style="background:#1c1f26;margin:0"></body>');
-      resultTab.document.close();
+      try {
+        resultTab.document.write('<meta charset="utf-8"><body style="background:#1c1f26;margin:0"></body>');
+        resultTab.document.close();
+      } catch {}
     }
 
     const result = await searchTrade(request, league, version);
@@ -1779,10 +1797,8 @@ PH.saved = (() => {
          pointing at the original tab isn't enough — its toast auto-
          dismisses well before you've switched back to look for it — so
          searchTrade's own error message (see its own return there) is
-         shown directly here now, not just a generic pointer to go find
-         it elsewhere. Still same-origin at this point (about:blank, never
-         navigated anywhere yet), so writing a real message straight into
-         it is safe — same as the dark-background write above.
+         shown directly here too, in Chrome — not just a generic pointer
+         to go find it elsewhere.
 
          result?.error is always one of searchTrade's own hardcoded
          strings today (never raw server text), but it's still assigned via
@@ -1791,16 +1807,27 @@ PH.saved = (() => {
          what ends up in that string later, which a template literal
          can't promise on its own. Firefox's AMO linter flags exactly this
          pattern (an unsanitized dynamic value passed to document.write)
-         even though nothing user-controlled reaches it today. */
+         even though nothing user-controlled reaches it today.
+
+         Wrapped the same way as the dark-background write above, for the
+         same Firefox reason — this .document access throws there too. On
+         Firefox this just closes the otherwise-permanently-blank tab
+         instead, relying on searchTrade's own toast (already shown in the
+         original tab, every failure branch) rather than a message that
+         can't be written here. */
       if (resultTab) {
-        const doc = resultTab.document;
-        doc.write(
-          '<meta charset="utf-8"><body style="background:#1c1f26;margin:0;color:#c9ccd3;font:14px sans-serif;padding:32px;line-height:1.6"><p>Search this exact item didn\'t go through.</p></body>'
-        );
-        const message = doc.createElement("p");
-        message.textContent = result?.error ?? "Check the original tab for why (rate limited, a network error, ...) and try again from there.";
-        doc.body.appendChild(message);
-        doc.close();
+        try {
+          const doc = resultTab.document;
+          doc.write(
+            '<meta charset="utf-8"><body style="background:#1c1f26;margin:0;color:#c9ccd3;font:14px sans-serif;padding:32px;line-height:1.6"><p>Search this exact item didn\'t go through.</p></body>'
+          );
+          const message = doc.createElement("p");
+          message.textContent = result?.error ?? "Check the original tab for why (rate limited, a network error, ...) and try again from there.";
+          doc.body.appendChild(message);
+          doc.close();
+        } catch {
+          try { resultTab.close(); } catch {}
+        }
       }
       return;
     }
@@ -3282,7 +3309,7 @@ PH.saved = (() => {
            listing itself. */
         const footer = el("div", { class: `ph-compare-col-footer ${borderClass}`.trim() },
           button("Find Item", {
-            title: "Search the trade site directly for this item's name and rolled mods — GGG rate-limits this strictly, so repeated clicks in quick succession will get refused or blocked",
+            title: "Search the trade site directly for this item's name and rolled mods\nGGG rate-limits this strictly, so repeated clicks in quick succession will get refused or blocked",
             onClick: () => rebuildSearch(listing),
           }),
           bookmarkButton(listing, folders)
@@ -3701,7 +3728,7 @@ PH.saved = (() => {
             }, PH.ui.icon("refresh"))
           : null,
         PH.ui.iconButton(PH.ui.icon("search"), {
-          title: "Search the trade site directly for this item's name and rolled mods — GGG rate-limits this strictly, so repeated clicks in quick succession will get refused or blocked",
+          title: "Search the trade site directly for this item's name and rolled mods\nGGG rate-limits this strictly, so repeated clicks in quick succession will get refused or blocked",
           onClick: () => rebuildSearch(listing),
         }),
         bookmarkButton(listing, context.folders, { iconOnly: true }),

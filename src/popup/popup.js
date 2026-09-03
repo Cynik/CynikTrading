@@ -5,8 +5,12 @@
    based, its `chrome.*` compat alias isn't, so every `await` below needs
    whichever global is actually the real one for this browser. The popup is
    its own execution context (not a content script), so it gets its own
-   copy of this rather than sharing store.js's. */
-const browserAPI = window.browser ?? window.chrome;
+   copy of this rather than sharing store.js's. Read as the bare `browser`/
+   `chrome` identifier, not `window.browser`/`window.chrome` — store.js's
+   own note has the real Firefox bug this avoided there; not confirmed to
+   bite an extension page like this popup too, but there's no reason to
+   keep the same risky pattern here once it's known to be wrong. */
+const browserAPI = typeof browser !== "undefined" ? browser : chrome;
 
 const rateEl = document.getElementById("rate");
 const tildeBox = document.getElementById("tilde");

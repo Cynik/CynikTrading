@@ -398,14 +398,31 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   padding: 1px 4px;
   margin: 0 -4px;
   border-radius: 3px;
+  /* Centered, not the block-level default of left — a plain-text tooltip
+     line reads as a short, self-contained statement rather than a run of
+     body copy, closer to a caption than a paragraph. Scoped to this class
+     (and .ph-hover-popup-title below) rather than set on .ph-hover-popup
+     itself so it doesn't inherit down into structured content appended as
+     a raw Node instead of a plain line — .ph-hover-grid's own price-history
+     table, wireModRangeHover's roll-quality bar — which already sets its
+     own alignment per cell and would misalign if this cascaded into it. */
+  text-align: center;
 }
 .ph-hover-popup-line + .ph-hover-popup-line { margin-top: 1px; }
+/* A plain-text el() tooltip's own lines (see ui.js) — spaced apart enough to
+   read as two distinct statements rather than the default 1px used by
+   hoverPopup's other, deliberately tight-packed multi-line callers (the
+   rate-limit pill's own rows, a price-history popup's own lines), where
+   this wider gap would look like broken layout rather than intentional
+   spacing. */
+.ph-tooltip-line + .ph-tooltip-line { margin-top: 8px; }
 
 /* A small uppercase label above a popup's content, separated by a hairline
    — gives a price-history popup a "card" identity instead of reading as a
    bare stack of lines. Optional; only used where PH.ui.hoverPopup is given
    a title. */
 .ph-hover-popup-title {
+  text-align: center;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;

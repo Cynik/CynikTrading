@@ -19,7 +19,17 @@ PH.ui = (() => {
      every hover, so nothing ever competes with a native tooltip for the
      same trigger. aria-label is still set from `title` (unless a call site
      already gave its own, more specific one) so screen readers keep the
-     same information a native title attribute would have carried. */
+     same information a native title attribute would have carried — as one
+     space-joined sentence there, even though the popup itself renders it
+     as separate centered lines (see below). A `title` with an embedded
+     "\n" becomes one popup line per segment instead of a single run-on
+     line — a secondary note (e.g. a rate-limit warning) reads as its own
+     statement underneath the main description, not one line stitched
+     together with an em dash. Each segment carries the ph-tooltip-line
+     class specifically so panel.css can space consecutive segments apart
+     (a real ask — cramped otherwise) without also widening the gap between
+     hoverPopup's other, deliberately tight-packed multi-line callers (the
+     rate-limit pill's own rows, a price-history popup's own lines). */
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
     let tooltip;
@@ -37,8 +47,8 @@ PH.ui = (() => {
       node.append(typeof child === "string" ? document.createTextNode(child) : child);
     }
     if (tooltip) {
-      if (!node.hasAttribute("aria-label")) node.setAttribute("aria-label", tooltip);
-      hoverPopup(node, [tooltip]);
+      if (!node.hasAttribute("aria-label")) node.setAttribute("aria-label", tooltip.replace(/\n/g, " "));
+      hoverPopup(node, tooltip.split("\n").map((text) => ({ text, class: "ph-tooltip-line" })));
     }
     return node;
   }

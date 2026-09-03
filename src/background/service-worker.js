@@ -14,8 +14,13 @@
    based, its `chrome.*` compat alias isn't, so every `await` below needs
    whichever global is actually the real one for this browser. The
    background script is its own execution context, so it gets its own
-   copy of this rather than sharing store.js's (a content script). */
-const browserAPI = globalThis.browser ?? globalThis.chrome;
+   copy of this rather than sharing store.js's (a content script). Read as
+   the bare `browser`/`chrome` identifier, not `globalThis.browser`/
+   `globalThis.chrome` — store.js's own note has the real Firefox bug this
+   avoided there; not confirmed to bite a background script too, but
+   there's no reason to keep the same risky pattern here once it's known
+   to be wrong. */
+const browserAPI = typeof browser !== "undefined" ? browser : chrome;
 
 const LOG = (...args) => console.log("[PoE Helper SW]", ...args);
 
