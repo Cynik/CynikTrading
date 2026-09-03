@@ -2,11 +2,6 @@
 
 This project is based in part on Better Trading by Exile Center, which is licensed under the MIT License.
 
-Improvements to Better Trading:
-
-- Automaically adds the fuzzy search modifier (~) to all trade search fields
--
-
 Quality-of-life additions to the official Path of Exile trade site, as an
 in-page panel.
 
