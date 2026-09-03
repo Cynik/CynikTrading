@@ -33,13 +33,15 @@ Works in any Chromium browser — Opera GX, Chrome, Edge, Brave — and in Firef
 
 **Chromium browsers**
 
-1. Open the extensions page: `opera://extensions` in Opera GX (or
+1. Download the `-chrome.zip` file from the [latest release](https://github.com/Cynik/CynikTrading/releases/latest)
+   and extract it
+2. Open the extensions page: `opera://extensions` in Opera GX (or
    Ctrl+Shift+E), `chrome://extensions` in Chrome or Edge
-2. Turn on **Developer mode** (top right)
-3. Click **Load unpacked** and pick this folder — the one containing
-   `manifest.json`, not the file itself
-4. Open the trade site. The panel appears on the right; the `‹` tab on its edge
-   collapses it.
+3. Turn on **Developer mode** (top right)
+4. Click **Load unpacked** and pick the extracted folder — the one
+   containing `manifest.json`, not the file itself
+5. Open the trade site. The panel appears on the right; the `‹` tab on its
+   edge collapses it.
 
 No Chrome Web Store account or "Install Chrome Extensions" addon is needed —
 loading unpacked bypasses the store entirely.
@@ -57,18 +59,6 @@ reload the trade page.
 
 It installs permanently, like any other extension — no repeating this on
 restart.
-
-**Running from source instead?** Firefox only allows an unpacked, unsigned
-extension to load temporarily, one session at a time:
-
-1. Open `about:debugging#/runtime/this-firefox`
-2. Click **Load Temporary Add-on…** and pick `manifest.json` inside this
-   folder
-3. Open the trade site. The panel appears the same way it does on Chromium.
-
-This unloads when Firefox closes, so steps 1-2 need repeating next time you
-open it. After editing files, click **Reload** next to the add-on on the
-same `about:debugging` page, then reload the trade page.
 
 ---
 
