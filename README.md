@@ -47,7 +47,7 @@ reload the trade page.
 
 **Firefox**
 
-1. Download the `.xpi` file from the [latest release](https://github.com/Cynik/CynikTrading/releases/latest)
+1. Download the `-firefox.xpi` file from the [latest release](https://github.com/Cynik/CynikTrading/releases/latest)
 2. Drag it into a Firefox window (or `about:addons` → gear icon →
    **Install Add-on From File…** and pick it)
 3. Click **Add** on the permission prompt, then open the trade site. The panel
