@@ -56,36 +56,16 @@ reload the trade page.
 
 **Firefox**
 
-Firefox requires every extension to be signed by Mozilla before **Install
-Add-on From File** (the gear icon on `about:addons`) will accept it — that
-dialog only takes a packaged, signed `.xpi`, which is why browsing to this
-project's folder there shows nothing selectable but subfolders: an unsigned
-raw folder was never going to work through it, on any release or beta
-build, with no setting to turn that off. `about:debugging` is the supported
-way to load an unpacked, unsigned extension like this one instead:
-
 1. Open `about:debugging#/runtime/this-firefox`
-2. Click **Load Temporary Add-on…** and select the `manifest.json` **file**
-   inside this folder — unlike Chrome's folder picker above, Firefox wants
-   the file itself, not the folder containing it
+2. Click **Load Temporary Add-on…** and pick `manifest.json` inside this
+   folder
 3. Open the trade site. The panel appears the same way it does on Chromium.
 
-This only lasts for the current Firefox session — it's dropped the moment
-Firefox closes, so steps 1-2 need repeating next time you open it. After
-editing files, click **Reload** next to the add-on on the same
-`about:debugging` page, then reload the trade page.
-
-**To make it survive a restart** (skip this if reloading each session is
-fine): only Firefox **Developer Edition**, **Nightly**, or **ESR** can
-install an unsigned extension permanently — release and beta Firefox have
-no equivalent, the setting below doesn't exist there.
-
-1. In one of those three builds, open `about:config`, search for
-   `xpinstall.signatures.required`, and set it to `false`
-2. Zip this folder's contents (not the folder itself — `manifest.json`
-   should sit at the root of the zip) and rename it to end in `.xpi`
-3. Open `about:addons`, click the gear icon, choose **Install Add-on From
-   File…**, and pick that `.xpi`
+A temporary add-on unloads when Firefox closes, so this step needs repeating
+each session — that's Firefox's own limitation for unpacked/unsigned
+extensions, not something this project can skip around. After editing files,
+click **Reload** next to the add-on on the same `about:debugging` page, then
+reload the trade page.
 
 ## Moving over from Better Trading
 
