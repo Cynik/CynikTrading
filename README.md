@@ -20,7 +20,7 @@ in-page panel.
   search fuzzy by default. Delete it for an exact search.
 - **Chaos ↔ divine** — the other currency's value, next to each listed price.
 
-Works on `pathofexile.com/trade` (PoE 1) and `/trade2` (PoE 2).
+Extension only runs on the official Path of Exile 1 and 2 trade websites.
 
 ## Install
 
