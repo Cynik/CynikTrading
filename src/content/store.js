@@ -597,20 +597,38 @@ PH.store = (() => {
   }
 
   /* Resets the folder's own Total Cost trend history back to a fresh
-     baseline: the current total (its most recent entry, if any) is kept so
-     the header keeps showing a live number, but everything older than that
-     is dropped, so there's nothing left to compare against — no trend
-     arrow, no multi-point popup — until a genuinely new total gets
-     recorded on a later open. The trades underneath, and their own price
-     histories, are untouched. */
-  async function clearFolderTotalCost(folderId) {
+     baseline: currentTotal (the caller's own live recomputation, from that
+     folder's actual current trades — see totalCostFor/tradesByFolder in
+     bookmarks.js) becomes the single entry kept, so there's nothing left to
+     compare against — no trend arrow, no multi-point popup — until a
+     genuinely new total differs from it on a later render. null (nothing
+     priced right now) clears the history to empty instead, rather than
+     keeping a number with nothing behind it.
+
+     Deliberately NOT the previously-stored "latest" entry (an earlier
+     version just kept whatever was already there) — that value can already
+     be stale relative to the live trades: renderTrades' own debounced
+     Total Cost push (TOTAL_COST_PUSH_DEBOUNCE_MS, up to 4s out) can still
+     be in flight when this runs, and if it landed after a reset that kept
+     the old stale entry, it appended a second, *different* entry right
+     back — a real, reported bug where "Reset Total Cost trend" appeared to
+     do nothing, since the trend it just cleared reappeared moments later.
+     Keeping the live total here instead means even a stale pending push
+     resolves to the exact same amount, which nextPriceHistory's own dedup
+     (see pushFolderTotalCost) collapses into a timestamp refresh on this
+     same entry rather than a new slot.
+
+     The trades underneath, and their own price histories, are untouched. */
+  async function clearFolderTotalCost(folderId, currentTotal) {
     return withLock(async () => {
       const { folders } = await readAll();
       const i = folders.findIndex((f) => f.id === folderId);
       if (i === -1) return;
 
-      const latest = (folders[i].totalCostHistory ?? []).at(-1);
-      folders[i] = { ...folders[i], totalCostHistory: latest ? [latest] : [] };
+      const kept = currentTotal != null
+        ? [{ amount: currentTotal, currency: "chaos", capturedAt: new Date().toISOString() }]
+        : [];
+      folders[i] = { ...folders[i], totalCostHistory: kept };
       await PH.browserAPI.storage.local.set({ folders });
     });
   }

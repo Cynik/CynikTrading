@@ -96,7 +96,11 @@ PH.bookmarks = (() => {
 
   /* Two equal-width rows rather than one — folder-management actions (New /
      Import / Archive) on top, the expand/collapse-all pair below. Each row's
-     buttons are flex:1 1 0 so they split that row's width evenly. */
+     buttons are flex:1 1 0 so they split that row's width evenly. A divider
+     line above and below row2 boxes it off from both row1 and the folder
+     list underneath — per a real report, without it every button plus the
+     folder list read as one undifferentiated block, with nothing marking
+     that Collapse all is a view toggle rather than a fourth folder action. */
   function toolbar(foldersForThisGame) {
     const archived = foldersForThisGame.filter((f) => f.archivedAt).length;
     const visibleNow = foldersForThisGame.filter((f) => (showArchive() ? f.archivedAt : !f.archivedAt));
@@ -131,7 +135,12 @@ PH.bookmarks = (() => {
       })
     );
 
-    return el("div", { class: "ph-toolbar" }, row1, row2);
+    return el("div", { class: "ph-toolbar" },
+      row1,
+      el("hr", { class: "ph-toolbar-divider" }),
+      row2,
+      el("hr", { class: "ph-toolbar-divider" })
+    );
   }
 
   /* ----------------------------------------------------------- folder row */
@@ -221,7 +230,21 @@ PH.bookmarks = (() => {
     if (editing?.kind === "clear-total-cost" && editing.folderId === folder.id) {
       row.append(confirmRow(`Reset the trend for “${folder.title}”'s Total Cost? The current total stays, but the trend arrow and past-total history reset — the trades inside, and their own price histories, are untouched.`, {
         confirmLabel: "Clear",
-        onConfirm: async () => { await PH.store.clearFolderTotalCost(folder.id); setEditing(null); },
+        /* Passes the live total (recomputed from this folder's own trades),
+           not the previously-stored "latest" entry — see the note above
+           clearFolderTotalCost in store.js for the real bug that fixed:
+           renderTrades' own debounced Total Cost push (up to 4s out — see
+           TOTAL_COST_PUSH_DEBOUNCE_MS) can still be pending from before this
+           click, and if it landed after a reset that kept the old stale
+           entry, it re-added a *different* second entry, resurrecting the
+           very trend arrow this was supposed to clear. Using the live total
+           here means even that stale pending push resolves to the exact
+           same amount and collapses into a timestamp refresh instead. */
+        onConfirm: async () => {
+          const trades = tradesByFolder ? (tradesByFolder[folder.id] ?? []) : await PH.store.getTrades(folder.id);
+          await PH.store.clearFolderTotalCost(folder.id, totalCostFor(trades));
+          setEditing(null);
+        },
         onCancel: () => setEditing(null),
       }));
     }

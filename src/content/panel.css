@@ -343,6 +343,14 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
    amount from its own natural size. */
 .ph-toolbar-row > .ph-btn { flex: 1 1 0; text-align: center; }
 
+/* Boxes the Expand/Collapse-all toggle between the folder-action row above
+   it and the folder list below — per a real report, all four toolbar
+   buttons plus the folder list read as one undifferentiated block with
+   nothing marking that Collapse all is a view toggle, not a fourth
+   folder-management action. Every button keeps its existing border/fill;
+   this is purely a grouping line, not a restyle. */
+.ph-toolbar-divider { border: 0; border-top: 1px solid var(--ph-line); margin: 2px 0; }
+
 /* ---- dropdown menu ---- */
 
 .ph-menu-wrap { position: relative; flex: 0 0 auto; }
@@ -532,9 +540,14 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 .ph-folders { display: flex; flex-direction: column; gap: 6px; }
 
 .ph-folder {
-  border: 1px solid var(--ph-line);
+  /* Brighter than --ph-line (#454e5c) plus a real shadow — a plain 1px
+     border on the same dark background as the rest of the panel read as
+     flat, per a real report; the shadow is what actually lifts the card
+     off the panel rather than just outlining it. */
+  border: 1px solid #545c6d;
   border-radius: 4px;
   background: var(--ph-surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
   /* No overflow:hidden here — it would also clip any dropdown menu inside
      that needs to extend past the folder's edge. The header rounds its own
      corners below instead. */
@@ -546,12 +559,18 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   align-items: center;
   gap: 4px;
   padding: 6px 6px 6px 8px;
-  background: linear-gradient(var(--ph-surface-3), var(--ph-surface-2));
+  /* Brighter top stop than before (was --ph-surface-3/--ph-surface-2, too
+     close in tone to read as a distinct title bar) so the header itself
+     stands apart from the card body underneath it. */
+  background: linear-gradient(#454d5f, #2e3543);
   /* Matches .ph-folder's radius — collapsed, the header IS the whole card;
      .ph-open below narrows this to just the top corners once a body follows. */
   border-radius: 4px;
 }
-.ph-folder-head.ph-open { border-bottom: 1px solid var(--ph-line); border-radius: 4px 4px 0 0; }
+/* Gold-tinted rather than the plain --ph-line every other divider in this
+   file uses — echoes .ph-tab-active's own gold, marking this specific
+   line as "title bar ends here" rather than just another separator. */
+.ph-folder-head.ph-open { border-bottom: 1px solid var(--ph-gold-dim); border-radius: 4px 4px 0 0; }
 
 .ph-folder-toggle, .ph-saved-group-toggle {
   flex: 1 1 auto;
@@ -615,16 +634,26 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 
 /* ---- saved searches ---- */
 
-.ph-trades { display: flex; flex-direction: column; gap: 2px; }
+/* 5px, not the old 2px — close to touching read as one continuous stripe
+   rather than a list of distinct rows, per a real report. */
+.ph-trades { display: flex; flex-direction: column; gap: 5px; }
 
 .ph-trade {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 4px 4px 4px 8px;
-  border: 1px solid transparent;
+  /* A faint real edge (not fully transparent) plus a slight shadow gives
+     each row its own outline against the folder body behind it — a
+     transparent border on the same-toned background made every row read
+     as a flat tint rather than a distinct item, per the same report. The
+     shared .ph-trade:hover rule above (background: --ph-surface-3, border:
+     --ph-gold-dim) already gives it a lift on hover; no extra rule needed
+     here. */
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 3px;
   background: var(--ph-surface-2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 .ph-trade.ph-dragging { opacity: 0.4; }
 .ph-trade.ph-done .ph-trade-title { text-decoration: line-through; opacity: 0.55; }
