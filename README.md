@@ -57,9 +57,6 @@ reload the trade page.
 3. Click **Add** on the permission prompt, then open the trade site. The panel
    appears the same way it does on Chromium.
 
-It installs permanently, like any other extension — no repeating this on
-restart.
-
 ---
 
 This product isn't affiliated with or endorsed by Grinding Gear Games in any way.
