@@ -25,6 +25,34 @@
   --ph-link: #dcc186;
   --ph-blue: #4a7ab0;
   --ph-danger: #d1665a;
+  /* A separate, dimmer pair for a "danger" surface (button/toast border +
+     its readable-on-dark text) — distinct from --ph-danger above, which is
+     used as a brighter accent (icon/badge borders), not a text/border pair
+     meant to sit together on a dark background. */
+  --ph-danger-border: #6b352e;
+  --ph-danger-text: #e79c93;
+
+  /* GGG's own item-rarity colors (item-popup--<rarity>), read generically —
+     see itemRarity in saved.js. Each one is reused across three different
+     rules (a plain text/border color, a manual-group border, and that same
+     group's header gradient/border-bottom) that all need to agree, so
+     they're named once here instead of repeating the hex three times each. */
+  --ph-rarity-normal: #c8c8c8;
+  --ph-rarity-magic: #8888ff;
+  --ph-rarity-rare: #ffff77;
+  --ph-rarity-unique: #af6025;
+  --ph-rarity-gem: #1ba29b;
+  --ph-rarity-currency: #aa9e82;
+}
+
+/* Shared hover treatment for every clickable chip/button/row in the panel —
+   named once here instead of repeating the same pair on each selector, so
+   they can't quietly drift apart from each other. A few of these also set
+   their own `color` on top; that stays on their own rule below. */
+.ph-collapse:hover, .ph-btn:hover, .ph-icon-btn:hover, .ph-icon-choice:hover,
+.ph-trade:hover, .ph-save-btn:hover, .ph-saved-group-compare:hover {
+  border-color: var(--ph-gold-dim);
+  background: var(--ph-surface-3);
 }
 
 /* ---- the trade site gives up some width so we're not covering results ---- */
@@ -137,6 +165,30 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   color: var(--ph-gold);
 }
 
+/* Trade-API rate-limit indicator — see ratelimit-overlay.js. Always visible
+   (unlike .ph-toast, which is transient) and gold normally, matching the
+   rest of the panel's accent color, turning red once any endpoint is close
+   to its own cap or already in cooldown. Hover for the per-policy breakdown
+   via the shared .ph-hover-popup. Pushed to the far right of the header by
+   margin-left: auto. */
+.ph-ratelimit-pill {
+  margin-left: auto;
+  padding: 2px 9px;
+  border: 1px solid var(--ph-gold-dim);
+  border-radius: 9px;
+  color: var(--ph-gold);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: default;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.ph-ratelimit-pill.ph-ratelimit-hot {
+  border-color: var(--ph-danger-border);
+  color: var(--ph-danger-text);
+}
+
 /* The chevron stays reachable when the panel is slid off-screen. */
 .ph-collapse {
   position: absolute;
@@ -153,7 +205,6 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   line-height: 1;
   cursor: pointer;
 }
-.ph-collapse:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
 
 /* ---- tabs ---- */
 
@@ -220,7 +271,6 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
      class, so this has to be said explicitly. */
   text-decoration: none;
 }
-.ph-btn:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
 
 .ph-btn-primary {
   border-color: var(--ph-gold-dim);
@@ -229,7 +279,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 }
 .ph-btn-primary:hover { border-color: var(--ph-gold); }
 
-.ph-btn-danger { border-color: #6b352e; color: #e79c93; }
+.ph-btn-danger { border-color: var(--ph-danger-border); color: var(--ph-danger-text); }
 .ph-btn-danger:hover { background: #3d211e; border-color: var(--ph-danger); }
 
 .ph-btn-disabled { opacity: 0.45; cursor: default; }
@@ -248,7 +298,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   cursor: pointer;
   border-radius: 3px;
 }
-.ph-icon-btn:hover { color: var(--ph-gold); border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
+.ph-icon-btn:hover { color: var(--ph-gold); }
 
 /* An icon SVG (see PH.ui.icon) sitting inside an .ph-icon-btn — inherits
    the button's own color via stroke="currentColor" (set on the <svg>
@@ -314,7 +364,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   cursor: pointer;
 }
 .ph-menu-item:hover { background: var(--ph-surface-3); }
-.ph-menu-item.ph-danger { color: #e79c93; }
+.ph-menu-item.ph-danger { color: var(--ph-danger-text); }
 .ph-menu-sep { height: 1px; margin: 4px 2px; background: var(--ph-line); }
 
 /* ---- custom hover popup (PH.ui.hoverPopup) — not the native title tooltip */
@@ -327,7 +377,6 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
      to actually show up while hovering a mod inside it, rather than
      rendering invisibly behind it. */
   z-index: 2100;
-  min-width: 180px;
   padding: 8px 10px;
   border: 1px solid var(--ph-gold-dim);
   border-radius: 6px;
@@ -438,7 +487,6 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   cursor: pointer;
   line-height: 0;
 }
-.ph-icon-choice:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
 .ph-icon-choice.ph-chosen { border-color: var(--ph-gold); background: rgba(212, 175, 90, 0.18); }
 
 /* ---- folders ---- */
@@ -467,7 +515,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 }
 .ph-folder-head.ph-open { border-bottom: 1px solid var(--ph-line); border-radius: 4px 4px 0 0; }
 
-.ph-folder-toggle {
+.ph-folder-toggle, .ph-saved-group-toggle {
   flex: 1 1 auto;
   display: flex;
   align-items: center;
@@ -481,8 +529,9 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   cursor: pointer;
   text-align: left;
 }
+.ph-saved-group-toggle { gap: 8px; }
 
-.ph-folder-title {
+.ph-folder-title, .ph-saved-group-title {
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -539,7 +588,6 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   border-radius: 3px;
   background: var(--ph-surface-2);
 }
-.ph-trade:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
 .ph-trade.ph-dragging { opacity: 0.4; }
 .ph-trade.ph-done .ph-trade-title { text-decoration: line-through; opacity: 0.55; }
 
@@ -662,7 +710,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 }
 
 .ph-editor-note { color: var(--ph-muted); font-size: 11.5px; }
-.ph-editor-note.ph-error { color: #e79c93; }
+.ph-editor-note.ph-error { color: var(--ph-danger-text); }
 
 .ph-form { display: flex; flex-direction: column; gap: 8px; }
 .ph-form-actions { display: flex; gap: 6px; }
@@ -719,7 +767,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   font-size: 12.5px;
   text-align: center;
 }
-.ph-save-btn:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); color: var(--ph-gold); }
+.ph-save-btn:hover { color: var(--ph-gold); }
 
 /* Already saved (see PH.saved.syncSaveButtons) — disabled rather than a
    second click target, since un-saving happens from the Saved tab, not by
@@ -801,48 +849,23 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
    it. .ph-saved-group itself picks up the same class for its outer
    border, so the tint reads as one continuous accent around the whole
    card, not just the header strip. */
-.ph-saved-group.ph-rarity-magic { border-color: #8888ff; }
-.ph-saved-group.ph-rarity-rare { border-color: #ffff77; }
-.ph-saved-group.ph-rarity-unique { border-color: #af6025; }
-.ph-saved-group.ph-rarity-currency { border-color: #aa9e82; }
-.ph-saved-group.ph-rarity-gem { border-color: #1ba29b; }
-.ph-saved-group.ph-rarity-normal { border-color: #c8c8c8; }
+.ph-saved-group.ph-rarity-magic { border-color: var(--ph-rarity-magic); }
+.ph-saved-group.ph-rarity-rare { border-color: var(--ph-rarity-rare); }
+.ph-saved-group.ph-rarity-unique { border-color: var(--ph-rarity-unique); }
+.ph-saved-group.ph-rarity-currency { border-color: var(--ph-rarity-currency); }
+.ph-saved-group.ph-rarity-gem { border-color: var(--ph-rarity-gem); }
+.ph-saved-group.ph-rarity-normal { border-color: var(--ph-rarity-normal); }
 
-.ph-saved-group.ph-rarity-magic .ph-saved-group-head { background: linear-gradient(rgba(136, 136, 255, 0.22), var(--ph-surface-2)); border-bottom-color: #8888ff; }
-.ph-saved-group.ph-rarity-rare .ph-saved-group-head { background: linear-gradient(rgba(255, 255, 119, 0.2), var(--ph-surface-2)); border-bottom-color: #ffff77; }
-.ph-saved-group.ph-rarity-unique .ph-saved-group-head { background: linear-gradient(rgba(175, 96, 37, 0.32), var(--ph-surface-2)); border-bottom-color: #af6025; }
-.ph-saved-group.ph-rarity-currency .ph-saved-group-head { background: linear-gradient(rgba(170, 158, 130, 0.28), var(--ph-surface-2)); border-bottom-color: #aa9e82; }
-.ph-saved-group.ph-rarity-gem .ph-saved-group-head { background: linear-gradient(rgba(27, 162, 155, 0.28), var(--ph-surface-2)); border-bottom-color: #1ba29b; }
-.ph-saved-group.ph-rarity-normal .ph-saved-group-head { background: linear-gradient(rgba(200, 200, 200, 0.18), var(--ph-surface-2)); border-bottom-color: #c8c8c8; }
+.ph-saved-group.ph-rarity-magic .ph-saved-group-head { background: linear-gradient(rgba(136, 136, 255, 0.22), var(--ph-surface-2)); border-bottom-color: var(--ph-rarity-magic); }
+.ph-saved-group.ph-rarity-rare .ph-saved-group-head { background: linear-gradient(rgba(255, 255, 119, 0.2), var(--ph-surface-2)); border-bottom-color: var(--ph-rarity-rare); }
+.ph-saved-group.ph-rarity-unique .ph-saved-group-head { background: linear-gradient(rgba(175, 96, 37, 0.32), var(--ph-surface-2)); border-bottom-color: var(--ph-rarity-unique); }
+.ph-saved-group.ph-rarity-currency .ph-saved-group-head { background: linear-gradient(rgba(170, 158, 130, 0.28), var(--ph-surface-2)); border-bottom-color: var(--ph-rarity-currency); }
+.ph-saved-group.ph-rarity-gem .ph-saved-group-head { background: linear-gradient(rgba(27, 162, 155, 0.28), var(--ph-surface-2)); border-bottom-color: var(--ph-rarity-gem); }
+.ph-saved-group.ph-rarity-normal .ph-saved-group-head { background: linear-gradient(rgba(200, 200, 200, 0.18), var(--ph-surface-2)); border-bottom-color: var(--ph-rarity-normal); }
 /* Collapse toggle — same shape as .ph-folder-toggle in Bookmarks, wrapping
    the chevron/title/count as one clickable region that fills the header
    next to the fixed-width actions on the right. */
-.ph-saved-group-toggle {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 2px;
-  border: 0;
-  background: none;
-  color: var(--ph-ink);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
 .ph-saved-group-chevron { flex: 0 0 auto; width: 10px; color: var(--ph-muted); font-size: 10px; }
-.ph-saved-group-title {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: 12.5px;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--ph-ink);
-}
 /* Was a plain count badge; now the button that opens the compare modal
    (see openCompareModal in saved.js) — same pill shape and size as the
    badge it replaced, just clickable. */
@@ -860,7 +883,7 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   white-space: nowrap;
   cursor: pointer;
 }
-.ph-saved-group-compare:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); color: var(--ph-gold); }
+.ph-saved-group-compare:hover { color: var(--ph-gold); }
 
 .ph-saved-group-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 
@@ -997,7 +1020,17 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
 /* Same shape as the green case above, but gold and "shiny" — a soft glow
    via box-shadow rather than just a brighter border, so the one column
    that's both cheapest and highest-scoring is unmistakably a step above
-   a plain green win, not just a different color of the same thing. */
+   a plain green win, not just a different color of the same thing.
+
+   position: relative (mods-cell/footer) plus a raised z-index (header) is
+   load-bearing, not decoration — these are adjacent, opaque grid siblings
+   with no gap between them, so a shadow "bleeding" outward from a plain
+   static/auto-stacked box gets silently painted over by whichever
+   neighboring column happens to sit later in DOM order, which is most of
+   them. A positioned box always paints above its non-positioned siblings
+   regardless of DOM order, so lifting only the gold cells this way makes
+   the glow actually visible past both edges instead of only showing up
+   when the highlighted column happens to be the very first or last one. */
 .ph-compare-col-header.ph-compare-col-gold,
 .ph-compare-mods-cell.ph-compare-col-gold,
 .ph-compare-col-footer.ph-compare-col-gold {
@@ -1005,8 +1038,12 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   border-right: 2px solid var(--ph-gold);
   box-shadow: 0 0 8px rgba(212, 175, 90, 0.45);
 }
-.ph-compare-col-header.ph-compare-col-gold { border-top: 2px solid var(--ph-gold); }
+.ph-compare-col-header.ph-compare-col-gold { border-top: 2px solid var(--ph-gold); z-index: 2; }
 .ph-compare-col-footer.ph-compare-col-gold { border-bottom: 2px solid var(--ph-gold); }
+.ph-compare-mods-cell.ph-compare-col-gold,
+.ph-compare-col-footer.ph-compare-col-gold {
+  position: relative;
+}
 
 /* The cheapest listing's own marker inside its price pill (see
    cheapestListingIds/renderTable) — same green as the mod-level star
@@ -1178,6 +1215,15 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   font-size: 11px;
   cursor: default;
 }
+/* A top-value star (see compareModCell in saved.js) that's also a max
+   roll on its own range (.ph-compare-mod-range-max) gets gold + a drop
+   shadow instead of the plain green above — per an explicit ask, to set
+   it apart as the strongest possible signal: not just the best of what's
+   here, but literally maxed out. */
+.ph-compare-mod-star-max {
+  color: var(--ph-gold);
+  filter: drop-shadow(0 0 3px var(--ph-gold));
+}
 /* A single, moderate-radius, near-opaque layer rather than the original
    doubled 6px solid glow (obscured the text) — went through 3px/0.75
    (too faint) and 4px/0.85 (still too faint per a second follow-up) to
@@ -1251,6 +1297,15 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   font-variant-numeric: tabular-nums;
 }
 .ph-compare-mod-range:not(:empty):hover { color: var(--ph-gold); cursor: default; }
+/* Min/max-rolled range text, colored the moment it's known (not just on
+   hover) so a worst/best roll reads at a glance down the column — red for
+   a roll sitting at the very bottom of its range (0% — see modQuality in
+   saved.js), the same #7fd88f green already used for "best of the
+   compared items" elsewhere in this family for one sitting at the very
+   top (100%). Still turns gold on hover like every other range badge,
+   per the more specific rule above. */
+.ph-compare-mod-range-min { color: var(--ph-danger); }
+.ph-compare-mod-range-max { color: #7fd88f; }
 /* A real implicit in a light grey (per an explicit correction — not blue,
    which read too close to the prefix/suffix code colors), the dimmed
    "total"/pseudo summary lines (no tier code of their own; see the note
@@ -1332,18 +1387,64 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   overflow: hidden;
 }
 .ph-compare-mod-bar-fill { position: absolute; inset: 0 auto 0 0; height: 100%; background: var(--ph-gold); }
+.ph-compare-mod-bar-fill.ph-compare-mod-range-min { background: var(--ph-danger); }
+.ph-compare-mod-bar-fill.ph-compare-mod-range-max { background: #7fd88f; }
+.ph-compare-mod-quality { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 
 .ph-saved-group-members { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .ph-saved-group-members .ph-saved-row { background: var(--ph-surface-2); }
 
 /* Dragging a grouped listing out into open space anywhere on the page
-   (not onto another row — see wireDocumentUngroupDrop in saved.js)
-   ungroups it, replacing an earlier dedicated "drag here to remove from
-   a group" zone that wasn't working reliably. No dedicated highlight for
-   this case (unlike ph-drop-target on a row) — "anywhere that isn't a
-   row" spans well outside the list's own visible bounds, so there's no
+   (not onto another row — see wireDocumentUngroupDrop in saved.js) also
+   ungroups it, as a fallback for whenever there genuinely is open space to
+   drop into. No dedicated highlight for that path — "anywhere that isn't
+   a row" spans well outside the list's own visible bounds, so there's no
    single element to highlight; the cursor switching from "no-drop" to a
-   normal move cursor is the feedback. */
+   normal move cursor is the feedback. The primary, always-reachable way
+   to ungroup is ph-saved-ungroup-zone below. */
+
+/* The standing ungroup target (see ungroupedDropZone in saved.js) — fixed
+   to the panel's own position rather than living inside the scrolling
+   list, so it's reachable no matter how long the list is or how far it's
+   scrolled; see the long comment on ungroupedDropZone for why that matters.
+   Hidden until a grouped listing's drag actually starts (ph-ungroup-zone-
+   active, toggled in wireGroupDrag's dragstart/dragend), rather than
+   sitting there all the time as one more thing to visually parse. Same
+   dashed-border "utility zone, not a real group card" language the first
+   version of this used. */
+.ph-saved-ungroup-zone {
+  display: none;
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: calc(var(--ph-width) - 24px);
+  padding: 10px;
+  text-align: center;
+  border: 1px dashed var(--ph-line);
+  border-radius: 4px;
+  background: var(--ph-surface);
+  z-index: 1500;
+}
+.ph-saved-ungroup-zone.ph-ungroup-zone-active { display: block; }
+.ph-saved-ungroup-zone-title {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ph-muted);
+}
+.ph-saved-ungroup-zone-sub { font-size: 10.5px; color: var(--ph-muted); }
+/* Same gold-outline drop-target language as ph-drop-target, plus tinting
+   the text gold too since the zone's dashed border alone reads too close
+   to its own resting state otherwise. */
+.ph-saved-ungroup-zone.ph-drop-target {
+  border-style: solid;
+  border-color: var(--ph-gold);
+  outline: 2px solid var(--ph-gold);
+  outline-offset: -2px;
+}
+.ph-saved-ungroup-zone.ph-drop-target .ph-saved-ungroup-zone-title,
+.ph-saved-ungroup-zone.ph-drop-target .ph-saved-ungroup-zone-sub { color: var(--ph-gold); }
 
 /* The item's own artwork, captured at save time (see .icon img in
    saved.js) — a plain icon, not the full rarity/frame background some
@@ -1396,12 +1497,12 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
    source order; a listing saved before rarity was captured (or one whose
    rarity came back as something other than these) just keeps that
    default instead of going uncolored. */
-.ph-rarity-normal { color: #c8c8c8; }
-.ph-rarity-magic { color: #8888ff; }
-.ph-rarity-rare { color: #ffff77; }
-.ph-rarity-unique { color: #af6025; }
-.ph-rarity-gem { color: #1ba29b; }
-.ph-rarity-currency { color: #aa9e82; }
+.ph-rarity-normal { color: var(--ph-rarity-normal); }
+.ph-rarity-magic { color: var(--ph-rarity-magic); }
+.ph-rarity-rare { color: var(--ph-rarity-rare); }
+.ph-rarity-unique { color: var(--ph-rarity-unique); }
+.ph-rarity-gem { color: var(--ph-rarity-gem); }
+.ph-rarity-currency { color: var(--ph-rarity-currency); }
 
 .ph-saved-price {
   flex: 0 0 auto;
@@ -1581,15 +1682,6 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   line-height: 1.5;
 }
 
-.ph-notice {
-  padding: 7px 9px;
-  border-left: 2px solid var(--ph-gold-dim);
-  background: rgba(212, 175, 90, 0.1);
-  color: #c9c3b6;
-  font-size: 11.5px;
-  line-height: 1.45;
-}
-
 .ph-converted {
   display: block;
   margin: 3px auto 0;
@@ -1625,58 +1717,11 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   transition: opacity 0.4s ease, transform 0.4s ease;
 }
 body.ph-collapsed .ph-toast { right: 16px; }
-.ph-toast-error { border-color: #6b352e; color: #e8a79f; }
+.ph-toast-error { border-color: var(--ph-danger-border); color: var(--ph-danger-text); }
 .ph-toast-out { opacity: 0; transform: translateY(6px); }
 
-/* ---- folder picker dialog ---- */
-
-.ph-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1002;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-}
-
-.ph-dialog {
-  min-width: 260px;
-  max-width: 340px;
-  max-height: 70vh;
-  overflow-y: auto;
-  padding: 14px;
-  border: 1px solid var(--ph-gold-dim);
-  border-radius: 5px;
-  background: var(--ph-surface);
-  color: var(--ph-ink);
-  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.ph-dialog-title {
-  margin-bottom: 4px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ph-gold);
-}
-.ph-dialog-choice {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 8px;
-  border: 1px solid var(--ph-line);
-  border-radius: 3px;
-  background: var(--ph-surface-2);
-  color: var(--ph-ink);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.ph-dialog-choice:hover { border-color: var(--ph-gold-dim); background: var(--ph-surface-3); }
 
 @media (prefers-reduced-motion: reduce) {
-  #ph-panel, body.ph-active #trade, .ph-toast { transition: none; }
+  #ph-panel, body.ph-active #trade, .ph-toast, .ph-ratelimit-pill { transition: none; }
   .ph-body > * { animation: none; }
 }

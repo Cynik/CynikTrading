@@ -149,24 +149,30 @@ PH.saved = (() => {
     localStorage.setItem(GROUP_COLLAPSE_KEY, [...set].join(","));
   }
 
-  /* {amount, currency} -> a chaos-equivalent number — same conversion
-     Bookmarks uses for its own price math (toChaosEquivalent in
-     bookmarks.js), duplicated here rather than shared since each module
-     already keeps its own small formatting helpers. currency is only ever
-     exactly "chaos" or "divine" for those two (see readCurrency in
-     prices.js); null if it's divine and the exchange rate hasn't loaded.
-     Any other currency (Orb of Fusing, Exalted Orb, ...) — a listing can
-     genuinely be saved priced in one of these, captureListing reads
-     whatever the row actually says — has no real rate available, so it's
-     floored to a flat ~1 chaos-equivalent rather than left uncomparable:
-     a deliberate, explicit approximation for sorting/diff/group-price
-     math on your own saved listings, not a real conversion. Used for the
-     price diff below and for sorting/grouping the list by price. */
+  /* {amount, currency} -> a chaos-equivalent number. Delegates to
+     PH.prices.chaosEquivalentOf, which resolves almost any currency's real
+     value via poe.ninja's own catalog (fetchCurrencyRates in
+     service-worker.js), not just chaos/divine — a listing can genuinely be
+     saved priced in Orb of Alchemy, Gemcutter's Prism, etc. (captureListing
+     reads whatever the row actually says), and now gets a real conversion
+     instead of a flat guess for those.
+
+     A null from chaosEquivalentOf is ambiguous — "no rate loaded at all
+     yet" (temporary, resolves itself once the fetch lands) vs "the rate IS
+     loaded but this currency genuinely isn't in poe.ninja's catalog"
+     (permanent). Only the permanent case floors to a flat ~1
+     chaos-equivalent (a deliberate, explicit approximation for sorting/
+     diff/group-price math on your own saved listings, not a real
+     conversion); the temporary case propagates null instead, matching
+     bookmarks.js's own toChaosEquivalent — collapsing the two into one
+     flat floor caused a real Total Cost oscillation bug there (see its own
+     comment for the full account), and this shares the same
+     PH.prices.chaosEquivalentOf dependency even though Saved listings have
+     no summed total of their own to oscillate. */
   function toChaosEquivalent(entry) {
-    if (entry.currency === "chaos") return entry.amount;
-    const rate = PH.prices.currentRate();
-    if (entry.currency === "divine") return rate ? entry.amount * rate.divineInChaos : null;
-    return 1;
+    const real = PH.prices.chaosEquivalentOf(entry.amount, entry.currency);
+    if (real != null) return real;
+    return PH.prices.currentRate() ? 1 : null;
   }
 
   function chaosDelta(before, after) {
@@ -517,7 +523,18 @@ PH.saved = (() => {
      target had company via auto-grouping, pulls every one of those
      members in too, rather than leaving the target's old automatic
      group looking broken by losing just the one item that got dragged
-     away from it. */
+     away from it.
+
+     Dropping onto a groupmate you're already manually grouped with is
+     treated as an ungroup, not a no-op: a group card fills most of the
+     list's height, so dragging a member "out into open space" routinely
+     lands back on one of its own siblings rather than genuine empty
+     space. Silently doing nothing there made the whole ungroup gesture
+     feel broken — the drop-target highlight still lights up (it's just
+     another row), but nothing happens on release. Landing back on a
+     sibling is never a useful way to ask "add me to a group I'm already
+     in", so reinterpreting it as "take me out" is a strict improvement,
+     not a semantics conflict. */
   async function groupListings(draggedId, targetId) {
     if (draggedId === targetId) return;
 
@@ -525,14 +542,16 @@ PH.saved = (() => {
     const dragged = listings.find((l) => l.id === draggedId);
     const target = listings.find((l) => l.id === targetId);
     if (!dragged || !target) return;
-    if (dragged.groupId && dragged.groupId === target.groupId) return; // already together
+    if (dragged.groupId && dragged.groupId === target.groupId) return removeFromGroup(draggedId);
 
     if (target.groupId) {
       await PH.store.setListingGroup(dragged.id, target.groupId);
     } else {
       const targetKey = autoGroupKey(target);
+      const targetVersion = target.location?.version ?? "1";
       const autoCompany = targetKey
-        ? listings.filter((l) => !l.groupId && l.id !== dragged.id && l.id !== target.id && autoGroupKey(l) === targetKey)
+        ? listings.filter((l) => !l.groupId && l.id !== dragged.id && l.id !== target.id
+            && autoGroupKey(l) === targetKey && (l.location?.version ?? "1") === targetVersion)
         : [];
       const members = [target, ...autoCompany, dragged];
       const group = await PH.store.createSavedGroup(await nameForNewGroup(members));
@@ -567,9 +586,16 @@ PH.saved = (() => {
       const row = e.target.closest("[data-listing-id]");
       if (!row) return;
       draggedListingId = row.dataset.listingId;
+      dragOutcomeHandled = false;
       row.classList.add("ph-dragging");
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", draggedListingId);
+
+      /* Only reveal the standing ungroup target for a listing that's
+         actually in a group — dropping an already-standalone listing onto
+         it would just be a no-op (see removeFromGroup's own guard), so
+         showing it then would be a target that does nothing. */
+      if (row.closest(".ph-saved-group")) ungroupZoneEl?.classList.add("ph-ungroup-zone-active");
     });
 
     /* The same gold outline a valid group target already gets doubles as
@@ -607,17 +633,83 @@ PH.saved = (() => {
       if (!draggedListingId) return;
       e.preventDefault();
       e.stopPropagation();
+      dragOutcomeHandled = true;
 
       if (!row) removeFromGroup(draggedListingId);
       else if (row.dataset.listingId !== draggedListingId) groupListings(draggedListingId, row.dataset.listingId);
     });
 
+    /* dragend always fires, whatever happened during the drag — a
+       successful drop somewhere, one that landed on a target whose own
+       drop handler didn't do its job for whatever reason, or a genuine
+       cancel (Escape, or releasing outside the browser window). Only the
+       middle case needs handling here: if nothing already resolved this
+       drag (dragOutcomeHandled) AND the browser doesn't consider it an
+       outright cancel (dropEffect stays "none" for that — every real drop
+       location on this page already gets preventDefault via wireGroupDrag/
+       wireDocumentUngroupDrop, so a genuine drop never leaves it at
+       "none"), treat it the same as dropping into open space: ungroup.
+       removeFromGroup's own guard makes this a no-op for anything that
+       wasn't grouped to begin with, so there's no harm in reaching this
+       point on an ordinary drag that already WAS handled some other way —
+       dragOutcomeHandled is what actually gates it. */
     list.addEventListener("dragend", (e) => {
       e.target.closest("[data-listing-id]")?.classList.remove("ph-dragging");
+      if (!dragOutcomeHandled && draggedListingId && e.dataTransfer.dropEffect !== "none") {
+        removeFromGroup(draggedListingId);
+      }
       draggedListingId = null;
       list.classList.remove("ph-drop-target");
       for (const dropTarget of list.querySelectorAll(".ph-drop-target")) dropTarget.classList.remove("ph-drop-target");
+      ungroupZoneEl?.classList.remove("ph-ungroup-zone-active", "ph-drop-target");
     });
+  }
+
+  /* A standing, always-reachable ungroup target — fixed to the panel's own
+     viewport position rather than living inside the scrolling `.ph-saved-
+     list`, unlike the "drop anywhere that isn't a row" fallback above and
+     the first version of this feature (a plain row appended to the bottom
+     of the list, removed for "not working reliably"; see the git history
+     on this file). A card-filled, possibly long-scrolling list gives that
+     approach two ways to fail that neither is really a bug in: the fallback's
+     only feedback is the entire list's own gold outline, which barely
+     shows once cards fill most of the visible area — nearly every point
+     you release over resolves to *some* row instead of the list's own
+     background — and the original dedicated zone, appended after every
+     group, scrolled along with everything else, so reaching it while
+     mid-drag from *further up* than the scroll position meant scrolling
+     the container by hand at the same time as controlling the drag
+     itself. Anchoring this one with position: fixed sidesteps both: it
+     always sits at the same spot on screen no matter how long the list is
+     or how far it's scrolled, and it's a big, clearly-labeled target
+     rather than a hard-to-notice outline. Kept alongside, not instead of,
+     the existing fallback — dropping into genuine open space still works
+     the same way it always did; this is just a second, more reliable way
+     to ask for the same thing. */
+  function ungroupedDropZone() {
+    const zone = el("div", { class: "ph-saved-ungroup-zone" },
+      el("div", { class: "ph-saved-ungroup-zone-title", text: "Ungrouped" }),
+      el("div", { class: "ph-saved-ungroup-zone-sub", text: "Drop here to remove from group" })
+    );
+
+    zone.addEventListener("dragover", (e) => {
+      if (!draggedListingId) return;
+      e.preventDefault();
+      zone.classList.add("ph-drop-target");
+    });
+
+    zone.addEventListener("dragleave", () => zone.classList.remove("ph-drop-target"));
+
+    zone.addEventListener("drop", (e) => {
+      zone.classList.remove("ph-drop-target");
+      if (!draggedListingId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragOutcomeHandled = true;
+      removeFromGroup(draggedListingId);
+    });
+
+    return zone;
   }
 
   /* The "drag out into open space to ungroup" half of the mechanism,
@@ -651,17 +743,23 @@ PH.saved = (() => {
     document.addEventListener("drop", (e) => {
       if (!draggedListingId) return;
       e.preventDefault();
+      dragOutcomeHandled = true;
       removeFromGroup(draggedListingId);
     });
   }
 
-  function formatChaosDelta(diff) {
+  /* version ("1"/"2", the listing's own location.version) picks Exalted
+     over Chaos as the below-divine unit for PoE2, via
+     PH.prices.smallUnitAmount — same substitution bookmarks.js's own copy
+     of this function uses; see poe2-exalt-replaces-chaos-in-hierarchy for
+     why. */
+  function formatChaosDelta(diff, version) {
     const abs = Math.abs(diff);
     const sign = diff > 0 ? "+" : "-";
     const rate = PH.prices.currentRate();
     return rate && abs >= rate.divineInChaos
       ? `${sign}${(abs / rate.divineInChaos).toFixed(1)} div`
-      : `${sign}${Math.round(abs)}c`;
+      : `${sign}${PH.prices.smallUnitAmount(abs, version)}`;
   }
 
   /* Bulk clearing — "Clear all" / "Clear selected" / the per-row checkbox.
@@ -684,6 +782,29 @@ PH.saved = (() => {
      drag. */
   let draggedListingId = null;
 
+  /* Set by whichever drop handler actually processes a given drag — the
+     list's own (onto a row, or onto open space), the standing ungroup
+     zone's, or the document-level fallback — so dragend below can tell
+     "some drop fired and made a decision" apart from "nothing ever did".
+     Reset to false at the start of every dragstart. Exists because a real
+     report showed a case where a drop's own dragover reliably highlighted
+     its target (proving preventDefault ran) but the matching drop event
+     itself apparently never reached that target's listener — a genuine
+     drag-and-drop inconsistency, not something worth chasing further to
+     explain, when dragend (which fires unconditionally at the end of
+     every drag, spec-guaranteed, regardless of whether a drop happened
+     anywhere) can just catch it directly instead. */
+  let dragOutcomeHandled = false;
+
+  /* The current render's standing ungroup target (see ungroupedDropZone) —
+     reassigned each render() since the element itself is torn down and
+     rebuilt along with everything else in `container`. Kept outside
+     render() so wireGroupDrag's dragstart/dragend handlers (attached once
+     per render to a *different* element, `list`) can reveal and hide it
+     without either function needing to thread a reference through the
+     other. null before the first render. */
+  let ungroupZoneEl = null;
+
   /* The filter box and price-sort toggle, same in-memory-only treatment
      as editing/selected above — not persisted, and reset to "show
      everything, unsorted" on a fresh boot. Kept outside render() (rather
@@ -694,6 +815,15 @@ PH.saved = (() => {
      (that would lose focus on every character typed). */
   let filterText = "";
   let sortDir = null; // null | "asc" | "desc" — cycles null -> asc -> desc -> null
+
+  /* Debounces the filter re-render — without it, every keystroke re-groups
+     and re-sorts the whole game-scoped list and rebuilds the DOM for it,
+     which gets janky once there are hundreds of saved listings. filterText
+     itself still updates on every keystroke (so the eventual render always
+     reflects the latest text, and Cancel/Clear-style reads of it elsewhere
+     stay live); only the expensive re-render is delayed. */
+  let filterDebounceTimer = null;
+  const FILTER_DEBOUNCE_MS = 150;
 
   function setEditing(next) {
     editing = next;
@@ -708,7 +838,7 @@ PH.saved = (() => {
   /* ---------------------------------------------------- the save button ---- */
 
   async function enhanceRows() {
-    const rows = document.querySelectorAll(`${ROW}:not([${MARK}])`);
+    const rows = PH.ui.tradeRoot().querySelectorAll(`${ROW}:not([${MARK}])`);
     if (!rows.length) return;
 
     for (const row of rows) {
@@ -775,7 +905,7 @@ PH.saved = (() => {
      are never created or removed here, only their label/disabled state —
      enhanceRows owns adding them once per row. */
   async function syncSaveButtons() {
-    const buttons = document.querySelectorAll(".ph-save-btn");
+    const buttons = PH.ui.tradeRoot().querySelectorAll(".ph-save-btn");
     if (!buttons.length) return;
 
     const saved = await PH.store.getSavedListings();
@@ -828,16 +958,6 @@ PH.saved = (() => {
   }
 
   async function captureListing(row) {
-    /* Guards against a duplicate save even if the button was somehow
-       still clickable despite syncSaveButtons — e.g. storage changed in
-       another tab in the instant between render and click. */
-    const existing = await PH.store.getSavedListings();
-    if (matchingListing(existing, row)) {
-      toast("Already saved.");
-      syncSaveButtons();
-      return;
-    }
-
     const page = PH.location.current();
     const { priced, fields } = snapshotFromRow(row);
 
@@ -848,8 +968,22 @@ PH.saved = (() => {
       priceHistory: priced ? [{ amount: priced.amount, currency: priced.currency, capturedAt: new Date().toISOString() }] : [],
     };
 
-    await PH.store.saveSavedListing(listing);
-    toast(`Saved “${listing.title ?? "listing"}”`);
+    /* The "already saved?" check and the write happen atomically inside
+       saveSavedListingUnlessDuplicate — guards against a duplicate save
+       even if the button was somehow still clickable despite
+       syncSaveButtons (e.g. storage changed in another tab, or this
+       click landed twice, in the instant between render and click). */
+    const saved = await PH.store.saveSavedListingUnlessDuplicate(
+      listing,
+      (l) => matchingListing([l], row) != null
+    );
+    if (!saved) {
+      toast("Already saved.");
+      syncSaveButtons();
+      return;
+    }
+
+    toast(`Saved “${saved.title ?? "listing"}”`);
     PH.panel.refresh();
     syncSaveButtons();
   }
@@ -1693,9 +1827,13 @@ PH.saved = (() => {
       return null;
     }
 
-    const blockedUntil = rateLimitCooldown(response.headers);
-    if (blockedUntil) await PH.store.setTradeSearchCooldown(blockedUntil);
-    else reportRateLimitWarning(response.headers, "search");
+    const rateData = parseRateLimitHeaders(response.headers);
+    if (rateData) {
+      const blockedUntil = rateLimitCooldown(rateData);
+      if (blockedUntil) await PH.store.setTradeSearchCooldown(blockedUntil);
+      else reportRateLimitWarning(rateData, "search");
+      PH.rateLimitOverlay?.update("search", rateData, blockedUntil);
+    }
 
     if (!response.ok) {
       toast(
@@ -1764,9 +1902,13 @@ PH.saved = (() => {
       return;
     }
 
-    const blockedUntil = rateLimitCooldown(response.headers);
-    if (blockedUntil) await PH.store.setTradeFetchCooldown(blockedUntil);
-    else reportRateLimitWarning(response.headers, "fetch");
+    const rateData = parseRateLimitHeaders(response.headers);
+    if (rateData) {
+      const blockedUntil = rateLimitCooldown(rateData);
+      if (blockedUntil) await PH.store.setTradeFetchCooldown(blockedUntil);
+      else reportRateLimitWarning(rateData, "fetch");
+      PH.rateLimitOverlay?.update("fetch", rateData, blockedUntil);
+    }
   }
 
   /* GGG's rate-limit headers, per policy this response's request was
@@ -1804,13 +1946,22 @@ PH.saved = (() => {
      calls returned. Leaving one request of headroom unclaimed cools us
      down a call earlier, before that invisible extra request has the
      chance to be the one that tips a rule over. */
-  function rateLimitCooldown(headers) {
+  /* Flattens GGG's own rate-limit headers into one entry per rule per window
+     (a rule like "Account" or "Ip" can carry several windows at once, e.g.
+     "8 per 10s" and "50 per 600s"), plus the policy name (x-rate-limit-
+     policy, e.g. "trade-search-request-limit" — GGG's own label for which
+     budget this endpoint is charged against, shown as-is by
+     PH.rateLimitOverlay so its readout matches what a real rate-limit
+     inspector shows). Shared by rateLimitCooldown, reportRateLimitWarning,
+     and PH.rateLimitOverlay below, all three of which used to each re-parse
+     the same raw headers independently. Returns null when the response
+     carries no rate-limit headers at all (calls that never hit a
+     rate-limited endpoint). */
+  function parseRateLimitHeaders(headers) {
     const rules = headers.get("x-rate-limit-rules");
     if (!rules) return null;
 
-    const now = Date.now();
-    let latest = null;
-
+    const entries = [];
     for (const rule of rules.split(",").map((r) => r.trim().toLowerCase())) {
       const limits = headers.get(`x-rate-limit-${rule}`)?.split(",") ?? [];
       const states = headers.get(`x-rate-limit-${rule}-state`)?.split(",") ?? [];
@@ -1818,13 +1969,22 @@ PH.saved = (() => {
       for (let i = 0; i < limits.length && i < states.length; i++) {
         const [maxCount, period, timeout] = limits[i].split(":").map(Number);
         const [currentCount, , currentTimeout] = states[i].split(":").map(Number);
-
-        const blockedFor = currentTimeout > 0 ? currentTimeout : currentCount >= maxCount - 1 ? (timeout || period) : 0;
-        if (blockedFor <= 0) continue;
-
-        const until = now + blockedFor * 1000;
-        if (!latest || until > latest) latest = until;
+        entries.push({ rule, maxCount, period, timeout, currentCount, currentTimeout });
       }
+    }
+    return { policy: headers.get("x-rate-limit-policy") ?? "", entries };
+  }
+
+  function rateLimitCooldown({ entries }) {
+    const now = Date.now();
+    let latest = null;
+
+    for (const { maxCount, period, timeout, currentCount, currentTimeout } of entries) {
+      const blockedFor = currentTimeout > 0 ? currentTimeout : currentCount >= maxCount - 1 ? (timeout || period) : 0;
+      if (blockedFor <= 0) continue;
+
+      const until = now + blockedFor * 1000;
+      if (!latest || until > latest) latest = until;
     }
 
     return latest;
@@ -1842,21 +2002,11 @@ PH.saved = (() => {
      since they're checking different remaining-headroom values). Shown as
      a plain toast, not the error-styled one rateLimitCooldown's own
      refusal uses, since nothing was actually refused yet. */
-  function reportRateLimitWarning(headers, label) {
-    const rules = headers.get("x-rate-limit-rules");
-    if (!rules) return;
-
+  function reportRateLimitWarning({ entries }, label) {
     const lines = [];
-    for (const rule of rules.split(",").map((r) => r.trim().toLowerCase())) {
-      const limits = headers.get(`x-rate-limit-${rule}`)?.split(",") ?? [];
-      const states = headers.get(`x-rate-limit-${rule}-state`)?.split(",") ?? [];
-
-      for (let i = 0; i < limits.length && i < states.length; i++) {
-        const [maxCount, period] = limits[i].split(":").map(Number);
-        const [currentCount] = states[i].split(":").map(Number);
-        if (maxCount > 0 && maxCount - currentCount === 2) {
-          lines.push(`${currentCount}/${maxCount} per ${period}s`);
-        }
+    for (const { maxCount, period, currentCount } of entries) {
+      if (maxCount > 0 && maxCount - currentCount === 2) {
+        lines.push(`${currentCount}/${maxCount} per ${period}s`);
       }
     }
 
@@ -1943,12 +2093,12 @@ PH.saved = (() => {
   /* -------------------------------------------------------------- render ---- */
 
   async function render(container) {
-    const [listings, lastSeenLeagues, groups, folders] = await Promise.all([
-      PH.store.getSavedListings(),
-      PH.store.getLastSeenLeagues(),
-      PH.store.getSavedGroups(),
-      PH.store.getFolders(),
-    ]);
+    /* One readAll() instead of four separate getters — each of those
+       internally re-reads all of storage on its own, so firing them
+       concurrently still meant four redundant full round-trips instead of
+       one on every Saved-tab render. */
+    const { savedListings: listings, leagues: lastSeenLeagues, savedGroups: groups, folders } =
+      await PH.store.readAll();
     const pageLocation = PH.location.current();
     const context = { pageLocation, lastSeenLeagues, folders };
 
@@ -1982,6 +2132,9 @@ PH.saved = (() => {
     container.append(searchSortToolbar(forThisGame, groups, context, list));
     renderFilteredList(list, forThisGame, groups, context);
     container.append(list);
+
+    ungroupZoneEl = ungroupedDropZone();
+    container.append(ungroupZoneEl);
 
     if (pendingFocusListingId) focusListingOnNextPaint(pendingFocusListingId);
   }
@@ -2021,7 +2174,11 @@ PH.saved = (() => {
       value: filterText,
       oninput: (e) => {
         filterText = e.target.value;
-        renderFilteredList(list, forThisGame, groups, context);
+        clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(
+          () => renderFilteredList(list, forThisGame, groups, context),
+          FILTER_DEBOUNCE_MS
+        );
       },
     });
 
@@ -2265,7 +2422,16 @@ PH.saved = (() => {
     if (!mod.range || mod.value == null) return null;
     const { min, max } = mod.range;
     if (max === min) return null;
-    const pct = ((mod.value - min) / (max - min)) * 100;
+    /* A "N% reduced X" mod's rendered text carries no sign (modRollValue
+       reads a plain positive percentage), but GGG's own range hint next
+       to it shows the actual underlying roll, which is negative for a
+       reduced stat (e.g. value 31 alongside a [-40, -20] range). Flip
+       the parsed value's sign when that's the only way it lands inside
+       its own range, so a reduced-stat mod doesn't clamp to a flat 100%
+       every time. */
+    let value = mod.value;
+    if ((value < min || value > max) && -value >= min && -value <= max) value = -value;
+    const pct = ((value - min) / (max - min)) * 100;
     return Math.max(0, Math.min(100, Math.round(pct)));
   }
 
@@ -2283,10 +2449,24 @@ PH.saved = (() => {
   function wireModRangeHover(node, mod) {
     const quality = modQuality(mod);
     if (quality == null) return;
+    /* Reuses the same red/green (ph-compare-mod-range-min/-max) already
+       used for the inline (min-max) range text elsewhere in this file,
+       so a worst/best roll reads the same color — bar fill and label
+       alike — whether it's the compact inline text or this popup. */
+    const labelClass = quality === 0 ? "ph-compare-mod-range-min" : quality === 100 ? "ph-compare-mod-range-max" : "";
+    /* A 0% fill is 0 width — invisible, so a Min Roll would show as a
+       blank bar instead of a red one. Fill it fully red instead so the
+       worst-possible roll still reads as a clearly "full" (bad) bar,
+       matching the Max Roll's already-full green bar at the other end. */
+    const barWidth = quality === 0 ? 100 : quality;
     const bar = el("span", { class: "ph-compare-mod-bar" },
-      el("span", { class: "ph-compare-mod-bar-fill", style: `width:${quality}%` })
+      el("span", { class: `ph-compare-mod-bar-fill ${labelClass}`.trim(), style: `width:${barWidth}%` })
     );
-    PH.ui.hoverPopup(node, [bar, `${quality}% of range`]);
+    const label = el("span", {
+      class: labelClass,
+      text: quality === 0 ? "Min Roll" : quality === 100 ? "Max Roll" : `${quality}% of range`,
+    });
+    PH.ui.hoverPopup(node, [el("div", { class: "ph-compare-mod-quality" }, bar, label)]);
   }
 
   /* A mod's own text color by kind — shared by modLineNode and
@@ -2503,7 +2683,13 @@ PH.saved = (() => {
   /* Same idea as modStarCounts — how many of a listing's own properties
      would earn comparePropertyCell's star, tallied per listing so it can
      feed the same whole-column border mod stars do (see
-     compareColumnBorder) rather than being its own, separate signal. */
+     compareColumnBorder) rather than being its own, separate signal.
+     Excludes SPECIAL_PROPERTIES (Intangibility) outright — per an explicit
+     ask, since a higher Intangibility roll is worse, not better, "highest
+     value wins a star" is backwards for it, and there's no inverted-star
+     concept to award instead; it just never earns one, though it stays
+     sortable (see comparePropertyCell's own isSpecial gate on
+     clickable/dir, not on this). */
   function propStarCounts(members, shareCounts, bestValues, uniformValues) {
     const counts = new Map();
     for (const listing of members) {
@@ -2511,6 +2697,7 @@ PH.saved = (() => {
       const countedKeys = new Set();
       for (const prop of propEntries(listing)) {
         if (prop.value == null) continue;
+        if (SPECIAL_PROPERTIES.test(prop.text)) continue;
         const key = propKey(prop);
         if (countedKeys.has(key)) continue;
         countedKeys.add(key);
@@ -2561,13 +2748,26 @@ PH.saved = (() => {
      on its own once one of the tied listings is also the cheapest (its
      total ends up one higher than the others'), with no separate
      tie-break rule needed for that case specifically. */
+  /* An unidentified listing is never eligible to WIN this border — per an
+     explicit ask, it has nothing real to compare (no explicit mods at
+     all, see identifiedMembers in openCompareModal), so even a "win" that
+     only came from its price star (it happens to be cheapest, with every
+     real mod-comparing listing sitting at zero) would be rewarding an
+     empty comparison rather than an actual best item. Excluded from the
+     candidate pool entirely instead of just never accumulating mod
+     stars — otherwise, being the sole cheapest listing among several
+     identified ones with no mod stars of their own would still let it win
+     on the strength of the price star alone. cheapestIds itself is
+     untouched (an unidentified listing can still be flagged cheapest for
+     its own price-pill star — just never for this). */
   function compareColumnBorder(members, starCounts, cheapestIds) {
     const totals = new Map();
     for (const listing of members) {
       totals.set(listing.id, (starCounts.get(listing.id) ?? 0) + (cheapestIds.has(listing.id) ? 1 : 0));
     }
-    const maxTotal = Math.max(0, ...members.map((l) => totals.get(l.id) ?? 0));
-    const winners = maxTotal > 0 ? members.filter((l) => totals.get(l.id) === maxTotal) : [];
+    const candidates = members.filter((l) => !l.unidentified);
+    const maxTotal = Math.max(0, ...candidates.map((l) => totals.get(l.id) ?? 0));
+    const winners = maxTotal > 0 ? candidates.filter((l) => totals.get(l.id) === maxTotal) : [];
     const winnerId = winners.length === 1 ? winners[0].id : null;
 
     return (listing) => {
@@ -2684,7 +2884,14 @@ PH.saved = (() => {
   function modRangeNode(mod) {
     const isObj = typeof mod === "object";
     const range = isObj && mod.value != null ? mod.range : null;
-    const span = el("span", { class: "ph-compare-mod-range", text: modRangeText(mod) });
+    const quality = modQuality(mod);
+    const qualityClass = quality === 0 ? " ph-compare-mod-range-min" : quality === 100 ? " ph-compare-mod-range-max" : "";
+    /* title: "" overrides the enclosing compareModCell's own "Click to
+       sort..." native tooltip (browsers otherwise walk up to the nearest
+       ancestor with a title attribute) — without it, hovering this badge
+       to see wireModRangeHover's own popup showed GGG's native tooltip
+       stacked on top of it, blocking the bar/label per a real report. */
+    const span = el("span", { class: `ph-compare-mod-range${qualityClass}`, text: modRangeText(mod), title: "" });
     if (range) wireModRangeHover(span, mod);
     return span;
   }
@@ -2825,23 +3032,49 @@ PH.saved = (() => {
     let shareCounts, bestValues, uniformValues, modStars;
     let propShares, propBests, propUniforms, propStars;
     let starCounts, cheapestIds, columnBorderFor;
+    /* An unidentified listing has no explicit mods to compare at all
+       (only whatever implicit(s) are genuinely visible unidentified), so
+       counting it toward "how many listings share this mod/property" or
+       "is this identical across every compared item" would make an
+       otherwise-universal match look partial just because one column
+       structurally can't carry it — the exact bug a real screenshot
+       showed (a mod every IDENTIFIED listing shared losing its dim/star
+       treatment solely because one column was unidentified). Excluded
+       from every share/best/uniform/star computation; still rendered as
+       its own column via the full `members` list elsewhere, and still
+       eligible for the cheapest-price star (cheapestIds,
+       compareColumnBorder) — per an explicit ask, the one thing an
+       unidentified listing can still earn. Hoisted alongside the other
+       derived state (not local to recomputeDerived) since compareModCell/
+       comparePropertyCell also need its own length — a mod/property
+       shared by every IDENTIFIED listing must compare its share count
+       against identifiedMembers.length, not members.length, or an
+       unidentified column in the compare would make a real 100% match
+       among the rest look partial. */
+    let identifiedMembers;
 
     function recomputeDerived() {
-      shareCounts = modShareCounts(members);
-      bestValues = modBestValues(members);
-      uniformValues = modUniformValues(members);
-      modStars = modStarCounts(members, shareCounts, bestValues, uniformValues);
+      identifiedMembers = members.filter((l) => !l.unidentified);
 
-      propShares = propShareCounts(members);
-      propBests = propBestValues(members);
-      propUniforms = propUniformValues(members);
-      propStars = propStarCounts(members, propShares, propBests, propUniforms);
+      shareCounts = modShareCounts(identifiedMembers);
+      bestValues = modBestValues(identifiedMembers);
+      uniformValues = modUniformValues(identifiedMembers);
+      modStars = modStarCounts(identifiedMembers, shareCounts, bestValues, uniformValues);
+
+      propShares = propShareCounts(identifiedMembers);
+      propBests = propBestValues(identifiedMembers);
+      propUniforms = propUniformValues(identifiedMembers);
+      propStars = propStarCounts(identifiedMembers, propShares, propBests, propUniforms);
 
       /* A listing's total star count for the whole-column border feeds
          off both mods and properties — a property that's the highest of
          several differing ones (see comparePropertyCell) counts toward
          the same tally a mod's own star does, per an explicit ask,
-         rather than being tracked as some separate, parallel signal. */
+         rather than being tracked as some separate, parallel signal.
+         Built from the full `members` list (not identifiedMembers) so an
+         unidentified listing still gets a real (zero) entry rather than
+         an undefined one — it just can never have earned any stars to
+         begin with, having been excluded above. */
       starCounts = new Map(members.map((l) => [l.id, (modStars.get(l.id) ?? 0) + (propStars.get(l.id) ?? 0)]));
       cheapestIds = cheapestListingIds(members);
       columnBorderFor = compareColumnBorder(members, starCounts, cheapestIds);
@@ -2864,13 +3097,16 @@ PH.saved = (() => {
       return sort.kind === "mod" ? modValueFor(listing, sort.id) : propValueFor(listing, sort.id);
     }
 
-    function applySort(kind, id) {
+    function applySort(kind, id, { defaultDir = "desc" } = {}) {
       /* First click on a new column sorts descending — highest roll
          first, per an explicit ask, rather than ascending — a click
-         toggles from there same as before. */
+         toggles from there same as before. defaultDir lets a caller
+         invert that for a property where lower is actually better (see
+         comparePropertyCell's own isSpecial gate) rather than hardcoding
+         "highest first" as universally correct. */
       sort = sort?.kind === kind && sort.id === id
         ? { kind, id, dir: sort.dir === "asc" ? "desc" : "asc" }
-        : { kind, id, dir: "desc" };
+        : { kind, id, dir: defaultDir };
       order = [...members].sort(priceComparator(sort.dir, sortValueFor));
       renderTable();
     }
@@ -2962,15 +3198,25 @@ PH.saved = (() => {
                 /* The cheapest of the compared listings — see
                    cheapestListingIds. Ties (an exact same chaos-
                    equivalent price) all get it, same as a tied mod
-                   value all getting compareModCell's own star. */
-                cheapestIds.has(listing.id)
+                   value all getting compareModCell's own star — UNLESS
+                   the tie spans every listing being compared, per an
+                   explicit ask: a star every single column earns is no
+                   longer a "cheapest" signal, just noise (the same
+                   reasoning Rule A already applies to a mod shared,
+                   identical, by everyone — see isUniformMatch). Still
+                   counted toward columnBorderFor/starCounts either way
+                   (that reads cheapestIds directly, not this gate) — the
+                   price star's absence here is purely visual; an
+                   all-tied price still keeps its column eligible for the
+                   gold/green border off whatever real mod stars it has. */
+                cheapestIds.has(listing.id) && cheapestIds.size < members.length
                   ? el("span", { class: "ph-compare-price-star", title: "Cheapest of the compared items", text: "★" })
                   : null
               )
             : null,
           listing.unidentified ? el("span", { class: "ph-saved-unidentified", text: "Unidentified" }) : null,
           listing.corrupted ? el("div", { class: "ph-saved-corrupted", text: "Corrupted" }) : null,
-          ...itemPropertyBlocks(listing, comparePropertyCell)
+          ...itemPropertyBlocks(listing, (prop) => comparePropertyCell(prop, listing))
         );
 
         /* Same implicit/divider/rest grouping a lone listing's own card
@@ -3044,7 +3290,12 @@ PH.saved = (() => {
       const isExplicit = isObj && mod.kind === "explicit";
       const hasValue = isObj && mod.value != null;
 
-      const isUniformMatch = isExplicit && count === members.length && uniformValues.get(key) === true;
+      /* identifiedMembers.length, not members.length — shareCounts/
+         uniformValues were computed over identified listings only (see
+         recomputeDerived), so "shared by everyone" has to mean everyone
+         who could actually carry the mod, not literally every column
+         including an unidentified one that structurally can't. */
+      const isUniformMatch = isExplicit && count === identifiedMembers.length && uniformValues.get(key) === true;
       const isTopValue = isExplicit && !isUniformMatch && count >= 2 && hasValue && mod.value === bestValues.get(key);
       const kindClass = modKindClass(mod);
       const isImplicit = isObj && mod.kind === "implicit";
@@ -3096,7 +3347,12 @@ PH.saved = (() => {
            inside the (fixed-width, right-aligned) range column itself —
            a star sized to fit that column would read cramped next to a
            number it's not actually part of. */
-        isTopValue ? el("span", { class: "ph-compare-mod-star", title: "Highest roll among compared items", text: "★" }) : null,
+        /* Gold + drop-shadow instead of the usual plain green when this
+           same mod is ALSO a max roll (see modRangeNode/modQuality) — per
+           an explicit ask, a top-value star that happens to be maxed out
+           on its own range deserves a stronger, distinct treatment from
+           an ordinary "highest of what's here" star. */
+        isTopValue ? el("span", { class: `ph-compare-mod-star${modQuality(mod) === 100 ? " ph-compare-mod-star-max" : ""}`, title: "Highest roll among compared items", text: "★" }) : null,
         modRangeNode(mod)
       );
     }
@@ -3107,10 +3363,15 @@ PH.saved = (() => {
        compareModCell already gives mods. No code badge or quality bar —
        those are mod-specific (affix tier, roll range) and don't apply to
        a property at all. */
-    function comparePropertyCell(prop) {
+    function comparePropertyCell(prop, listing) {
       const key = propKey(prop);
       const shareCount = propShares.get(key) ?? 0;
-      const isUniform = shareCount === members.length && propUniforms.get(key) === true;
+      /* identifiedMembers.length — see the same note on compareModCell's
+         own isUniformMatch. A property is visible on every listing
+         regardless of identification status (unlike explicit mods), so
+         this mostly matters for consistency with the mod-side check
+         rather than fixing a live bug on the property side specifically. */
+      const isUniform = shareCount === identifiedMembers.length && propUniforms.get(key) === true;
       /* Same "nothing to compare" gate compareModCell's own `hasRange`
          enforces for mods, adapted for a property's own lack of any
          roll-range concept — real, cross-listing agreement/disagreement
@@ -3118,8 +3379,26 @@ PH.saved = (() => {
          fewer than 2 listings, or identical on every listing that has
          it, isn't sortable or starrable either. */
       const hasVariability = shareCount >= 2 && !isUniform;
+      /* Intangibility is a negative stat — a *higher* roll is worse, not
+         better — so "highest value gets a star" (isTopValue below) would
+         be actively wrong for it, per an explicit ask. Left clickable and
+         sortable like any other property (there's real value in sorting
+         by it), just never starred/glowed and never counted toward the
+         column border total (see propStarCounts), and defaulting to an
+         ascending first click — lowest (best) first — rather than the
+         descending-first every other property/mod uses. */
+      const isSpecial = SPECIAL_PROPERTIES.test(prop.text);
       const clickable = prop.value != null && prop.id != null && hasVariability;
-      const isTopValue = hasVariability && prop.value === propBests.get(key);
+      /* !listing.unidentified — propBests/propUniforms only ever reflect
+         identified listings (see identifiedMembers), but an unidentified
+         listing's OWN property line still renders through this same
+         function and could coincidentally match that best value on its
+         own merits (e.g. its Physical Damage happening to equal the
+         identified listings' best) — this stops it from earning a star
+         it was never a real candidate for, per an explicit ask that an
+         unidentified listing can only ever earn the cheapest-price star,
+         nothing else. */
+      const isTopValue = !isSpecial && !listing.unidentified && hasVariability && prop.value === propBests.get(key);
       const isActive = sort?.kind === "prop" && sort.id === prop.id;
       const arrow = isActive ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
 
@@ -3138,7 +3417,7 @@ PH.saved = (() => {
           : isTopValue ? "Highest value among compared items"
           : null,
         text: `${prop.text}${arrow}`,
-        onclick: clickable ? () => applySort("prop", prop.id) : null,
+        onclick: clickable ? () => applySort("prop", prop.id, { defaultDir: isSpecial ? "asc" : "desc" }) : null,
       },
         isTopValue ? el("span", { class: "ph-compare-mod-star", title: "Highest value among compared items", text: "★" }) : null
       );
@@ -3219,11 +3498,11 @@ PH.saved = (() => {
         ? matching.map((folder) => ({
             label: folder.title,
             onClick: async () => {
-              await PH.store.saveTrade(folder.id, {
+              const saved = await PH.store.saveTrade(folder.id, {
                 title: listing.title || "Untitled item",
                 location: listing.location,
               });
-              toast(`Bookmarked to ${folder.title}`);
+              toast(saved ? `Bookmarked to ${folder.title}` : "That folder no longer exists.", { error: !saved });
             },
           }))
         : [{ label: "No folders yet — create one in Bookmarks first", onClick: () => {} }],
@@ -3275,7 +3554,7 @@ PH.saved = (() => {
           el("span", { class: "ph-hover-time", text: timeAgo(entry.capturedAt) }),
           el("span", { class: "ph-hover-price", text: formatPrice(entry) }),
           diff
-            ? el("span", { class: `ph-hover-diff ph-hover-diff-${diff > 0 ? "up" : "down"}`, text: formatChaosDelta(diff) })
+            ? el("span", { class: `ph-hover-diff ph-hover-diff-${diff > 0 ? "up" : "down"}`, text: formatChaosDelta(diff, listing.location?.version) })
             : el("span"),
         ];
       }).reverse().flat();

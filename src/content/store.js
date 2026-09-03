@@ -238,7 +238,32 @@
                     though this content script never calls /fetch for
                     listing data itself; see PH.saved.fetchListingHeaders
                     and the note above it for why this call exists at all.
-     settings     { tildePrefix, showPriceConversion }
+     tradeRateState  { search, fetch }  each null or { policy, entries,
+                    recordedAt } — the last real x-rate-limit-* reading
+                    PH.rateLimitOverlay parsed from that endpoint's own
+                    response headers (policy is GGG's own label, e.g.
+                    "trade-search-request-limit"; entries is one
+                    { maxCount, period, currentCount } per rate-limit
+                    window). Persisted (unlike tradeSearchCooldown/
+                    tradeFetchCooldown above, which only need the single
+                    "blocked until" moment) so the rate-limit pill in the
+                    panel header still has real numbers to decay from and
+                    display right after a fresh page load, not just within
+                    the tab that happened to make the request.
+     tradeLinkClicks  [ epoch ms, ... ]  timestamps of every bookmark
+                    trade-link click (PH.bookmarks' tradeRow, both the row's
+                    own link and its "Open live search" menu item) — this
+                    tab has no way to see the real request(s) that clicking
+                    one actually makes on GGG's side (it navigates away
+                    before any response comes back to us), so the rate-limit
+                    pill instead adds however many of these fall inside a
+                    given window's own period on top of that window's last
+                    real decayed count, an estimate rather than a real
+                    reading. Pruned on every write to whatever window the
+                    longest currently-known real rate-limit period is (falls
+                    back to a fixed default before any real data exists),
+                    so this never grows without bound.
+     settings     { tildePrefix, showPriceConversion, sortByTruePrice }
      leagues      { "1": "Allflame", "2": "Runes of Aldur" }   last seen per game
 
    A saved search's `location` is { version, type, slug } and deliberately
@@ -264,7 +289,9 @@ PH.store = (() => {
     pendingPriceCapture: null,
     tradeSearchCooldown: null,
     tradeFetchCooldown: null,
-    settings: { tildePrefix: true, showPriceConversion: true },
+    tradeRateState: { search: null, fetch: null },
+    tradeLinkClicks: [],
+    settings: { tildePrefix: true, showPriceConversion: true, sortByTruePrice: true },
     leagues: {},
   };
 
@@ -277,42 +304,73 @@ PH.store = (() => {
     return data;
   }
 
+  /* Every mutator below reads some slice of storage, changes it in memory,
+     then writes it back — and chrome.storage.local has no compare-and-swap,
+     so that read-then-write is NOT atomic. Two of these firing close
+     together (a fast double-click before a button disables itself, or the
+     same action taken in two trade-site tabs open at once) can interleave:
+     the second one reads before the first one writes, and its write then
+     silently clobbers the first change instead of building on it.
+
+     withLock() serializes them. Where the Web Locks API is available, the
+     lock is requested on navigator.locks, which MDN documents as scoped to
+     the page's origin — so this also covers multiple pathofexile.com tabs,
+     not just this one. Where it isn't (the Node test harness has no
+     `navigator`), this falls back to an in-module promise chain, which
+     still serializes everything within a single tab/content-script
+     instance. Every exported function that does its own read-modify-write
+     runs its whole body inside this — including migrateLegacyBookmarks,
+     where serializing is what stops two tabs racing to import the same
+     legacy `bookmarks` array twice: whichever runs second sees the first
+     one's chrome.storage.local.remove("bookmarks") already happened. */
+  let writeChain = Promise.resolve();
+  function withLock(fn) {
+    if (typeof navigator !== "undefined" && navigator.locks?.request) {
+      return navigator.locks.request("ph-store-mutate", fn);
+    }
+    const result = writeChain.then(fn, fn);
+    writeChain = result.then(() => {}, () => {});
+    return result;
+  }
+
   /* ----------------------------------------------------------------------
      One-time migration from v0.1, which kept a flat `bookmarks` array with
      full URLs. We fold those into a folder rather than dropping them.
      ---------------------------------------------------------------------- */
   async function migrateLegacyBookmarks() {
-    const { bookmarks } = await chrome.storage.local.get("bookmarks");
-    if (!Array.isArray(bookmarks) || bookmarks.length === 0) return;
+    return withLock(async () => {
+      const { bookmarks } = await chrome.storage.local.get("bookmarks");
+      if (!Array.isArray(bookmarks) || bookmarks.length === 0) return;
 
-    const folders = (await chrome.storage.local.get("folders")).folders ?? [];
-    const trades = (await chrome.storage.local.get("trades")).trades ?? {};
+      const folders = (await chrome.storage.local.get("folders")).folders ?? [];
+      const trades = (await chrome.storage.local.get("trades")).trades ?? {};
 
-    const folderId = newId();
-    folders.push({
-      id: folderId,
-      title: "Imported",
-      icon: "map",
-      version: "1",
-      archivedAt: null,
+      const folderId = newId();
+      folders.push({
+        id: folderId,
+        title: "Imported",
+        icon: "map",
+        version: "1",
+        archivedAt: null,
+      });
+
+      trades[folderId] = bookmarks
+        .map((b) => {
+          const loc = PH.location.parseUrl(b.url);
+          if (!loc) return null;
+          return {
+            id: newId(),
+            title: b.name || "Untitled",
+            completedAt: null,
+            location: { version: loc.version, type: loc.type, slug: loc.slug },
+          };
+        })
+        .filter(Boolean);
+
+      await chrome.storage.local.set({ folders, trades });
+      await chrome.storage.local.remove("bookmarks");
+      LOG(`migrated ${trades[folderId].length} old bookmarks into a folder`);
     });
-
-    trades[folderId] = bookmarks
-      .map((b) => {
-        const loc = PH.location.parseUrl(b.url);
-        if (!loc) return null;
-        return {
-          id: newId(),
-          title: b.name || "Untitled",
-          completedAt: null,
-          location: { version: loc.version, type: loc.type, slug: loc.slug },
-        };
-      })
-      .filter(Boolean);
-
-    await chrome.storage.local.set({ folders, trades });
-    await chrome.storage.local.remove("bookmarks");
-    LOG(`migrated ${trades[folderId].length} old bookmarks into a folder`);
   }
 
   /* ---------------------------------------------------------------- folders */
@@ -321,40 +379,53 @@ PH.store = (() => {
     return (await readAll()).folders;
   }
 
+  /* Returns the saved folder, or null if `folder.id` was given but no
+     longer matches anything (it was deleted, in this tab or another, in
+     the time between the editor opening and this submit) — callers must
+     check for null rather than assume an id-carrying save always lands,
+     since silently no-op'ing here while the caller still reports success
+     would hide a real failure from the user. */
   async function saveFolder(folder) {
-    const { folders } = await readAll();
-    if (folder.id) {
-      const i = folders.findIndex((f) => f.id === folder.id);
-      if (i !== -1) folders[i] = { ...folders[i], ...folder };
-    } else {
-      folder.id = newId();
-      folder.archivedAt = folder.archivedAt ?? null;
-      folders.push(folder);
-    }
-    await chrome.storage.local.set({ folders });
-    return folder;
+    return withLock(async () => {
+      const { folders } = await readAll();
+      if (folder.id) {
+        const i = folders.findIndex((f) => f.id === folder.id);
+        if (i === -1) return null;
+        folders[i] = { ...folders[i], ...folder };
+      } else {
+        folder.id = newId();
+        folder.archivedAt = folder.archivedAt ?? null;
+        folders.push(folder);
+      }
+      await chrome.storage.local.set({ folders });
+      return folder;
+    });
   }
 
   async function deleteFolder(folderId) {
-    const { folders, trades } = await readAll();
-    delete trades[folderId];
-    await chrome.storage.local.set({
-      folders: folders.filter((f) => f.id !== folderId),
-      trades,
+    return withLock(async () => {
+      const { folders, trades } = await readAll();
+      delete trades[folderId];
+      await chrome.storage.local.set({
+        folders: folders.filter((f) => f.id !== folderId),
+        trades,
+      });
     });
   }
 
   /* Archiving moves the folder to the end of the list, the way Better
      Trading does it, so active folders stay together at the top. */
   async function toggleFolderArchive(folderId) {
-    const { folders } = await readAll();
-    const i = folders.findIndex((f) => f.id === folderId);
-    if (i === -1) return;
-    const folder = folders[i];
-    folder.archivedAt = folder.archivedAt ? null : new Date().toUTCString();
-    folders.splice(i, 1);
-    folders.push(folder);
-    await chrome.storage.local.set({ folders });
+    return withLock(async () => {
+      const { folders } = await readAll();
+      const i = folders.findIndex((f) => f.id === folderId);
+      if (i === -1) return;
+      const folder = folders[i];
+      folder.archivedAt = folder.archivedAt ? null : new Date().toUTCString();
+      folders.splice(i, 1);
+      folders.push(folder);
+      await chrome.storage.local.set({ folders });
+    });
   }
 
   /* Reordering only ever hands us the folders currently VISIBLE (one game
@@ -362,17 +433,19 @@ PH.store = (() => {
      would scramble the hidden ones, so we write the reordered items back
      into the slots they already occupied. */
   async function reorderFolders(visibleIdsInNewOrder) {
-    const { folders } = await readAll();
-    const slots = [];
-    folders.forEach((f, i) => {
-      if (visibleIdsInNewOrder.includes(f.id)) slots.push(i);
+    return withLock(async () => {
+      const { folders } = await readAll();
+      const slots = [];
+      folders.forEach((f, i) => {
+        if (visibleIdsInNewOrder.includes(f.id)) slots.push(i);
+      });
+      if (slots.length !== visibleIdsInNewOrder.length) return;
+      const byId = new Map(folders.map((f) => [f.id, f]));
+      slots.forEach((slot, n) => {
+        folders[slot] = byId.get(visibleIdsInNewOrder[n]);
+      });
+      await chrome.storage.local.set({ folders });
     });
-    if (slots.length !== visibleIdsInNewOrder.length) return;
-    const byId = new Map(folders.map((f) => [f.id, f]));
-    slots.forEach((slot, n) => {
-      folders[slot] = byId.get(visibleIdsInNewOrder[n]);
-    });
-    await chrome.storage.local.set({ folders });
   }
 
   /* ----------------------------------------------------------------- trades */
@@ -381,39 +454,55 @@ PH.store = (() => {
     return (await readAll()).trades[folderId] ?? [];
   }
 
+  /* Returns the saved trade, or null on failure — either the parent folder
+     no longer exists (guards against resurrecting an orphaned trades[]
+     entry under a deleted folder id when registering a brand new trade),
+     or `trade.id` was given but no longer matches anything in that folder.
+     Callers must check for null; see saveFolder's own note for why a
+     silent no-op here can't be allowed to look like success upstream. */
   async function saveTrade(folderId, trade) {
-    const { trades } = await readAll();
-    const list = trades[folderId] ?? [];
-    if (trade.id) {
-      const i = list.findIndex((t) => t.id === trade.id);
-      if (i !== -1) list[i] = { ...list[i], ...trade };
-    } else {
-      trade.id = newId();
-      trade.completedAt = trade.completedAt ?? null;
-      list.push(trade);
-    }
-    trades[folderId] = list;
-    await chrome.storage.local.set({ trades });
-    return trade;
+    return withLock(async () => {
+      const { folders, trades } = await readAll();
+      if (!folders.some((f) => f.id === folderId)) return null;
+
+      const list = trades[folderId] ?? [];
+      if (trade.id) {
+        const i = list.findIndex((t) => t.id === trade.id);
+        if (i === -1) return null;
+        list[i] = { ...list[i], ...trade };
+      } else {
+        trade.id = newId();
+        trade.completedAt = trade.completedAt ?? null;
+        list.push(trade);
+      }
+      trades[folderId] = list;
+      await chrome.storage.local.set({ trades });
+      return trade;
+    });
   }
 
   async function replaceTrades(folderId, list) {
-    const { trades } = await readAll();
-    trades[folderId] = list;
-    await chrome.storage.local.set({ trades });
+    return withLock(async () => {
+      const { trades } = await readAll();
+      trades[folderId] = list;
+      await chrome.storage.local.set({ trades });
+    });
   }
 
   async function deleteTrade(folderId, tradeId) {
-    const list = await getTrades(folderId);
-    await replaceTrades(folderId, list.filter((t) => t.id !== tradeId));
+    return withLock(async () => {
+      const { trades } = await readAll();
+      trades[folderId] = (trades[folderId] ?? []).filter((t) => t.id !== tradeId);
+      await chrome.storage.local.set({ trades });
+    });
   }
 
   const PRICE_HISTORY_MAX = 5;
   /* A repeat visit within this window that finds the SAME price doesn't earn
      its own slot — it just refreshes the latest entry's timestamp. With only
-     3 slots, three uneventful re-checks would otherwise crowd out an actual
-     price change; this keeps the history meaningful (real changes) rather
-     than a log of "still 7c" three times over. */
+     PRICE_HISTORY_MAX slots, uneventful re-checks would otherwise crowd out
+     an actual price change; this keeps the history meaningful (real changes)
+     rather than a log of "still 7c" several times over. */
   const PRICE_DEDUP_MS = 3 * 60 * 60 * 1000;
 
   /* Shared by pushTradePrice and pushFolderTotalCost: appends entry onto a
@@ -436,12 +525,18 @@ PH.store = (() => {
      they each start a *fresh* history via a plain saveTrade, since a
      repointed trade's old prices belonged to a different search entirely. */
   async function pushTradePrice(folderId, tradeId, entry) {
-    const list = await getTrades(folderId);
-    const trade = list.find((t) => t.id === tradeId);
-    if (!trade) return;
+    return withLock(async () => {
+      const { trades } = await readAll();
+      const list = trades[folderId] ?? [];
+      const i = list.findIndex((t) => t.id === tradeId);
+      if (i === -1) return;
 
-    const history = trade.priceHistory ?? (trade.priceAtSave ? [trade.priceAtSave] : []);
-    await saveTrade(folderId, { id: tradeId, priceHistory: nextPriceHistory(history, entry) });
+      const trade = list[i];
+      const history = trade.priceHistory ?? (trade.priceAtSave ? [trade.priceAtSave] : []);
+      list[i] = { ...trade, priceHistory: nextPriceHistory(history, entry) };
+      trades[folderId] = list;
+      await chrome.storage.local.set({ trades });
+    });
   }
 
   /* Appends one Total Cost observation onto a folder's own rolling history —
@@ -450,12 +545,15 @@ PH.store = (() => {
      guards against opening/closing the same folder in quick succession
      without anything actually having changed. */
   async function pushFolderTotalCost(folderId, entry) {
-    const { folders } = await readAll();
-    const folder = folders.find((f) => f.id === folderId);
-    if (!folder) return;
+    return withLock(async () => {
+      const { folders } = await readAll();
+      const i = folders.findIndex((f) => f.id === folderId);
+      if (i === -1) return;
 
-    const history = folder.totalCostHistory ?? [];
-    await saveFolder({ id: folderId, totalCostHistory: nextPriceHistory(history, entry) });
+      const history = folders[i].totalCostHistory ?? [];
+      folders[i] = { ...folders[i], totalCostHistory: nextPriceHistory(history, entry) };
+      await chrome.storage.local.set({ folders });
+    });
   }
 
   /* Resets the folder's own Total Cost trend history back to a fresh
@@ -466,12 +564,15 @@ PH.store = (() => {
      recorded on a later open. The trades underneath, and their own price
      histories, are untouched. */
   async function clearFolderTotalCost(folderId) {
-    const { folders } = await readAll();
-    const folder = folders.find((f) => f.id === folderId);
-    if (!folder) return;
+    return withLock(async () => {
+      const { folders } = await readAll();
+      const i = folders.findIndex((f) => f.id === folderId);
+      if (i === -1) return;
 
-    const latest = (folder.totalCostHistory ?? []).at(-1);
-    await saveFolder({ id: folderId, totalCostHistory: latest ? [latest] : [] });
+      const latest = (folders[i].totalCostHistory ?? []).at(-1);
+      folders[i] = { ...folders[i], totalCostHistory: latest ? [latest] : [] };
+      await chrome.storage.local.set({ folders });
+    });
   }
 
   /* Wipes every trade's price history in the folder (and the legacy
@@ -482,22 +583,32 @@ PH.store = (() => {
      otherwise. The trades themselves, and everything else about them, are
      untouched. */
   async function clearFolderPriceHistory(folderId) {
-    const list = await getTrades(folderId);
-    const cleared = list.map((t) => {
-      const next = { ...t, priceHistory: [] };
-      delete next.priceAtSave;
-      return next;
+    return withLock(async () => {
+      const { trades, folders } = await readAll();
+      const list = trades[folderId] ?? [];
+      trades[folderId] = list.map((t) => {
+        const next = { ...t, priceHistory: [] };
+        delete next.priceAtSave;
+        return next;
+      });
+
+      const i = folders.findIndex((f) => f.id === folderId);
+      if (i !== -1) folders[i] = { ...folders[i], totalCostHistory: [] };
+
+      await chrome.storage.local.set({ trades, folders });
     });
-    await replaceTrades(folderId, cleared);
-    await saveFolder({ id: folderId, totalCostHistory: [] });
   }
 
   async function reorderTrades(folderId, idsInNewOrder) {
-    const list = await getTrades(folderId);
-    const byId = new Map(list.map((t) => [t.id, t]));
-    const reordered = idsInNewOrder.map((id) => byId.get(id)).filter(Boolean);
-    if (reordered.length !== list.length) return;
-    await replaceTrades(folderId, reordered);
+    return withLock(async () => {
+      const { trades } = await readAll();
+      const list = trades[folderId] ?? [];
+      const byId = new Map(list.map((t) => [t.id, t]));
+      const reordered = idsInNewOrder.map((id) => byId.get(id)).filter(Boolean);
+      if (reordered.length !== list.length) return;
+      trades[folderId] = reordered;
+      await chrome.storage.local.set({ trades });
+    });
   }
 
   /* ---------------------------------------------------------------- leagues */
@@ -507,10 +618,12 @@ PH.store = (() => {
      uses when a bookmark/live search has no page to inherit a league from. */
   async function noteLeague(loc) {
     if (!loc?.version || !loc?.league) return;
-    const { leagues } = await readAll();
-    if (leagues[loc.version] === loc.league) return;
-    leagues[loc.version] = loc.league;
-    await chrome.storage.local.set({ leagues });
+    return withLock(async () => {
+      const { leagues } = await readAll();
+      if (leagues[loc.version] === loc.league) return;
+      leagues[loc.version] = loc.league;
+      await chrome.storage.local.set({ leagues });
+    });
   }
 
   /* ---------------------------------------------------------- saved listings
@@ -526,12 +639,36 @@ PH.store = (() => {
   }
 
   async function saveSavedListing(listing) {
-    const { savedListings } = await readAll();
-    listing.id = newId();
-    listing.savedAt = listing.savedAt ?? new Date().toISOString();
-    savedListings.unshift(listing);
-    await chrome.storage.local.set({ savedListings });
-    return listing;
+    return withLock(async () => {
+      const { savedListings } = await readAll();
+      listing.id = newId();
+      listing.savedAt = listing.savedAt ?? new Date().toISOString();
+      savedListings.unshift(listing);
+      await chrome.storage.local.set({ savedListings });
+      return listing;
+    });
+  }
+
+  /* Same as saveSavedListing, but the "is this already saved?" check and
+     the write happen under the same lock — so two saves fired close
+     together (two tabs on the same search, or a click landing twice
+     before the button disables) can't both pass the check against the
+     same stale read and both write a duplicate. `isDuplicate` is the
+     caller's own matching logic (PH.saved.matchingListing scoped to one
+     candidate); it runs against a fresh read taken right before the
+     write, not whatever the caller read earlier. Returns the saved
+     listing, or null if a duplicate was found and nothing was written. */
+  async function saveSavedListingUnlessDuplicate(listing, isDuplicate) {
+    return withLock(async () => {
+      const { savedListings } = await readAll();
+      if (savedListings.some(isDuplicate)) return null;
+
+      listing.id = newId();
+      listing.savedAt = listing.savedAt ?? new Date().toISOString();
+      savedListings.unshift(listing);
+      await chrome.storage.local.set({ savedListings });
+      return listing;
+    });
   }
 
   async function deleteSavedListing(id) {
@@ -546,22 +683,24 @@ PH.store = (() => {
      drops one to 1 clears that survivor's own groupId too, not just a
      group left at 0. */
   async function deleteSavedListings(ids) {
-    const idSet = new Set(ids);
-    const { savedListings, savedGroups } = await readAll();
-    const remaining = savedListings.filter((l) => !idSet.has(l.id));
+    return withLock(async () => {
+      const idSet = new Set(ids);
+      const { savedListings, savedGroups } = await readAll();
+      const remaining = savedListings.filter((l) => !idSet.has(l.id));
 
-    const countByGroup = new Map();
-    for (const l of remaining) {
-      if (l.groupId) countByGroup.set(l.groupId, (countByGroup.get(l.groupId) ?? 0) + 1);
-    }
-    for (const l of remaining) {
-      if (l.groupId && countByGroup.get(l.groupId) < 2) l.groupId = null;
-    }
+      const countByGroup = new Map();
+      for (const l of remaining) {
+        if (l.groupId) countByGroup.set(l.groupId, (countByGroup.get(l.groupId) ?? 0) + 1);
+      }
+      for (const l of remaining) {
+        if (l.groupId && countByGroup.get(l.groupId) < 2) l.groupId = null;
+      }
 
-    const stillUsed = new Set(remaining.map((l) => l.groupId).filter(Boolean));
-    await chrome.storage.local.set({
-      savedListings: remaining,
-      savedGroups: (savedGroups ?? []).filter((g) => stillUsed.has(g.id)),
+      const stillUsed = new Set(remaining.map((l) => l.groupId).filter(Boolean));
+      await chrome.storage.local.set({
+        savedListings: remaining,
+        savedGroups: (savedGroups ?? []).filter((g) => stillUsed.has(g.id)),
+      });
     });
   }
 
@@ -575,20 +714,24 @@ PH.store = (() => {
      one listing onto another (a fresh group) and when renaming what was
      an automatic group (promoting it into a real, named one). */
   async function createSavedGroup(title) {
-    const { savedGroups } = await readAll();
-    const group = { id: newId(), title };
-    const list = [...(savedGroups ?? []), group];
-    await chrome.storage.local.set({ savedGroups: list });
-    return group;
+    return withLock(async () => {
+      const { savedGroups } = await readAll();
+      const group = { id: newId(), title };
+      const list = [...(savedGroups ?? []), group];
+      await chrome.storage.local.set({ savedGroups: list });
+      return group;
+    });
   }
 
   async function renameSavedGroup(id, title) {
-    const { savedGroups } = await readAll();
-    const group = (savedGroups ?? []).find((g) => g.id === id);
-    if (!group) return;
+    return withLock(async () => {
+      const { savedGroups } = await readAll();
+      const group = (savedGroups ?? []).find((g) => g.id === id);
+      if (!group) return;
 
-    group.title = title;
-    await chrome.storage.local.set({ savedGroups });
+      group.title = title;
+      await chrome.storage.local.set({ savedGroups });
+    });
   }
 
   /* Sets or clears (groupId: null) which manual group a listing belongs
@@ -599,23 +742,25 @@ PH.store = (() => {
      cleared, the now-unused savedGroups entry removed) — a group of one
      is never really a group. */
   async function setListingGroup(id, groupId) {
-    const { savedListings, savedGroups } = await readAll();
-    const listing = savedListings.find((l) => l.id === id);
-    if (!listing) return;
+    return withLock(async () => {
+      const { savedListings, savedGroups } = await readAll();
+      const listing = savedListings.find((l) => l.id === id);
+      if (!listing) return;
 
-    const previousGroupId = listing.groupId ?? null;
-    listing.groupId = groupId ?? null;
+      const previousGroupId = listing.groupId ?? null;
+      listing.groupId = groupId ?? null;
 
-    let groups = savedGroups ?? [];
-    if (previousGroupId && previousGroupId !== listing.groupId) {
-      const remainingInOld = savedListings.filter((l) => l.groupId === previousGroupId).length;
-      if (remainingInOld < 2) {
-        for (const l of savedListings) if (l.groupId === previousGroupId) l.groupId = null;
-        groups = groups.filter((g) => g.id !== previousGroupId);
+      let groups = savedGroups ?? [];
+      if (previousGroupId && previousGroupId !== listing.groupId) {
+        const remainingInOld = savedListings.filter((l) => l.groupId === previousGroupId).length;
+        if (remainingInOld < 2) {
+          for (const l of savedListings) if (l.groupId === previousGroupId) l.groupId = null;
+          groups = groups.filter((g) => g.id !== previousGroupId);
+        }
       }
-    }
 
-    await chrome.storage.local.set({ savedListings, savedGroups: groups });
+      await chrome.storage.local.set({ savedListings, savedGroups: groups });
+    });
   }
 
   /* Ungroups every listing currently in `groupId` (back to no group) and
@@ -623,13 +768,15 @@ PH.store = (() => {
      dissolves a manual group outright, as opposed to setListingGroup
      moving one listing at a time. */
   async function ungroupListings(groupId) {
-    const { savedListings, savedGroups } = await readAll();
-    for (const l of savedListings) {
-      if (l.groupId === groupId) l.groupId = null;
-    }
-    await chrome.storage.local.set({
-      savedListings,
-      savedGroups: (savedGroups ?? []).filter((g) => g.id !== groupId),
+    return withLock(async () => {
+      const { savedListings, savedGroups } = await readAll();
+      for (const l of savedListings) {
+        if (l.groupId === groupId) l.groupId = null;
+      }
+      await chrome.storage.local.set({
+        savedListings,
+        savedGroups: (savedGroups ?? []).filter((g) => g.id !== groupId),
+      });
     });
   }
 
@@ -640,12 +787,14 @@ PH.store = (() => {
      a same-price recheck just refreshes the latest entry's timestamp
      rather than taking a slot. */
   async function pushSavedListingPrice(id, entry) {
-    const { savedListings } = await readAll();
-    const listing = savedListings.find((l) => l.id === id);
-    if (!listing) return;
+    return withLock(async () => {
+      const { savedListings } = await readAll();
+      const listing = savedListings.find((l) => l.id === id);
+      if (!listing) return;
 
-    listing.priceHistory = nextPriceHistory(listing.priceHistory ?? [], entry);
-    await chrome.storage.local.set({ savedListings });
+      listing.priceHistory = nextPriceHistory(listing.priceHistory ?? [], entry);
+      await chrome.storage.local.set({ savedListings });
+    });
   }
 
   /* Merges `fields` onto a saved listing in place — used by
@@ -666,12 +815,14 @@ PH.store = (() => {
      listing's record with it, so this function itself trusts its caller
      to have already ruled that out rather than re-checking here. */
   async function updateSavedListingSnapshot(id, fields) {
-    const { savedListings } = await readAll();
-    const listing = savedListings.find((l) => l.id === id);
-    if (!listing) return;
+    return withLock(async () => {
+      const { savedListings } = await readAll();
+      const listing = savedListings.find((l) => l.id === id);
+      if (!listing) return;
 
-    Object.assign(listing, fields);
-    await chrome.storage.local.set({ savedListings });
+      Object.assign(listing, fields);
+      await chrome.storage.local.set({ savedListings });
+    });
   }
 
   /* Flags/clears a saved listing as "the last exact search for it found
@@ -686,13 +837,15 @@ PH.store = (() => {
      results tab the search just opened has its own independent copy of
      this same row. */
   async function setListingNoResults(id, value) {
-    const { savedListings } = await readAll();
-    const listing = savedListings.find((l) => l.id === id);
-    if (!listing) return;
+    return withLock(async () => {
+      const { savedListings } = await readAll();
+      const listing = savedListings.find((l) => l.id === id);
+      if (!listing) return;
 
-    if (value) listing.noResultsFound = true;
-    else delete listing.noResultsFound;
-    await chrome.storage.local.set({ savedListings });
+      if (value) listing.noResultsFound = true;
+      else delete listing.noResultsFound;
+      await chrome.storage.local.set({ savedListings });
+    });
   }
 
   /* ------------------------------------------------------- price capture */
@@ -727,16 +880,55 @@ PH.store = (() => {
     await chrome.storage.local.set({ tradeFetchCooldown: blockedUntil });
   }
 
+  async function getTradeRateState() {
+    return (await readAll()).tradeRateState;
+  }
+
+  async function setTradeRateState(endpoint, data) {
+    const tradeRateState = await getTradeRateState();
+    await chrome.storage.local.set({ tradeRateState: { ...tradeRateState, [endpoint]: data } });
+  }
+
+  const CLICK_HORIZON_DEFAULT_SECONDS = 120;
+  const CLICK_HORIZON_MAX_SECONDS = 900;
+
+  /* How far back tradeLinkClicks needs to reach to be useful: at least the
+     longest rate-limit window we've actually seen (no point pruning a click
+     that's still inside a real window PH.rateLimitOverlay is tracking), but
+     capped so a policy with a very long window (GGG's real search policy
+     carries one over 21600s) can't make this grow for hours — a warning
+     about clicking too fast only makes sense over a much shorter horizon
+     than that anyway. Falls back to a fixed default before any real
+     tradeRateState exists yet. */
+  function clickHorizonSeconds(tradeRateState) {
+    const periods = [tradeRateState?.search, tradeRateState?.fetch]
+      .filter(Boolean)
+      .flatMap((endpoint) => endpoint.entries.map((entry) => entry.period));
+    if (!periods.length) return CLICK_HORIZON_DEFAULT_SECONDS;
+    return Math.min(Math.max(...periods), CLICK_HORIZON_MAX_SECONDS);
+  }
+
+  async function getTradeLinkClicks() {
+    return (await readAll()).tradeLinkClicks;
+  }
+
+  /* Called on every bookmark trade-link click (see PH.bookmarks' tradeRow) —
+     there's no response for this tab to read a real rate-limit reading from,
+     since the click navigates away before one could come back, so this is
+     the only record that click ever happened. */
+  async function recordTradeLinkClick() {
+    const data = await readAll();
+    const horizonMs = clickHorizonSeconds(data.tradeRateState) * 1000;
+    const now = Date.now();
+    const tradeLinkClicks = data.tradeLinkClicks.filter((t) => now - t < horizonMs);
+    tradeLinkClicks.push(now);
+    await chrome.storage.local.set({ tradeLinkClicks });
+  }
+
   /* --------------------------------------------------------------- settings */
 
   async function getSettings() {
     return (await readAll()).settings;
-  }
-
-  async function setSetting(key, value) {
-    const settings = await getSettings();
-    settings[key] = value;
-    await chrome.storage.local.set({ settings });
   }
 
   async function getLastSeenLeagues() {
@@ -756,11 +948,12 @@ PH.store = (() => {
     getFolders, saveFolder, deleteFolder, toggleFolderArchive, reorderFolders, pushFolderTotalCost,
     clearFolderTotalCost, clearFolderPriceHistory,
     getTrades, saveTrade, replaceTrades, deleteTrade, reorderTrades, pushTradePrice,
-    getSavedListings, saveSavedListing, deleteSavedListing, deleteSavedListings, pushSavedListingPrice,
+    getSavedListings, saveSavedListing, saveSavedListingUnlessDuplicate, deleteSavedListing, deleteSavedListings, pushSavedListingPrice,
     updateSavedListingSnapshot, setListingNoResults,
     getSavedGroups, createSavedGroup, renameSavedGroup, setListingGroup, ungroupListings,
     setPendingPriceCapture, getPendingPriceCapture, clearPendingPriceCapture,
     getTradeSearchCooldown, setTradeSearchCooldown, getTradeFetchCooldown, setTradeFetchCooldown,
-    noteLeague, getSettings, setSetting, getLastSeenLeagues, onChange,
+    getTradeRateState, setTradeRateState, getTradeLinkClicks, recordTradeLinkClick,
+    noteLeague, getSettings, getLastSeenLeagues, onChange,
   };
 })();

@@ -42,14 +42,41 @@ async function resolveLeague(game) {
   return leagues[0].id;
 }
 
-/* Returns how many chaos one divine is worth.
+/* Returns the full currency-rate picture for a game: how many chaos one
+   divine is worth (needed for the chaos<->divine badge and for converting
+   PoE2's item-price index — see the note above PRICE_CATEGORIES), plus a
+   name -> chaos-equivalent-value table for every OTHER tradeable currency
+   poe.ninja tracks (Orb of Alchemy, Gemcutter's Prism, ...).
 
-   poe.ninja gives us a "primary" currency and rates expressed relative to it,
+   That table matters because PoE2 listings commonly get priced in
+   currencies other than chaos/divine — Alchemy Orbs and Gemcutter's Prisms
+   specifically (confirmed by the developer 2026-09) — so treating every
+   other currency as "no rate, don't guess" meant a real, common slice of
+   PoE2 listings could never be picked as the page's cheapest for Bookmarks/
+   Saved price tracking (PH.prices.cheapestOnPage in prices.js), and a
+   search where every visible listing happened to use one of those
+   currencies captured nothing at all.
+
+   One HTTP request already returns everything needed — poe.ninja's own
+   `?type=Currency` overview carries `core` (the primary/secondary summary
+   this always read), `lines` (every currency's own value as `primaryValue`,
+   expressed in `core.primary`'s units), and `items` (id -> the currency's
+   real display name, the same name readCurrency() in prices.js reads off a
+   trade-site row). primaryValue's "expressed in the primary currency's
+   units" convention was cross-checked live 2026-09 by triangulating it
+   against each line's own maxVolumeRate/maxVolumeCurrency pair for known
+   currencies (chaos, divine, Gemcutter's Prism) until the two independently
+   agreed, rather than assumed from the field name alone — the item-price
+   endpoint uses a same-named field with the same convention (see
+   normalizeItem below), but that's a structurally different endpoint and
+   wasn't assumed to share semantics without checking.
+
+   poe.ninja gives a "primary" currency and rates expressed relative to it,
    and the primary is DIFFERENT between the two games:
      PoE 1: primary = chaos, rates.divine ≈ 0.0047  -> divine = 1 / 0.0047
      PoE 2: primary = divine, rates.chaos  ≈ 11.15  -> divine = 11.15
    So we handle both rather than hardcoding one. */
-async function fetchDivineInChaos(game) {
+async function fetchCurrencyRates(game) {
   const league = await resolveLeague(game);
   const url =
     `https://poe.ninja/${game}/api/economy/exchange/current/overview` +
@@ -72,7 +99,19 @@ async function fetchDivineInChaos(game) {
     throw new Error(`nonsense rate from poe.ninja: ${divineInChaos}`);
   }
 
-  return { divineInChaos, league, fetchedAt: Date.now() };
+  // primaryValue is already in chaos when chaos is the primary (PoE1);
+  // otherwise (PoE2, primary=divine) it needs converting through divineInChaos.
+  const primaryToChaos = primary === "chaos" ? 1 : divineInChaos;
+  const nameById = Object.fromEntries((data.items ?? []).map((it) => [it.id, it.name]));
+  const chaosValueByName = {};
+  for (const line of data.lines ?? []) {
+    const name = nameById[line.id];
+    if (name && Number.isFinite(line.primaryValue)) {
+      chaosValueByName[name] = line.primaryValue * primaryToChaos;
+    }
+  }
+
+  return { divineInChaos, chaosValueByName, league, fetchedAt: Date.now() };
 }
 
 async function getCurrencyRate(game) {
@@ -80,14 +119,21 @@ async function getCurrencyRate(game) {
   const stored = await chrome.storage.local.get(cacheKey);
   const cached = stored[cacheKey];
 
+  /* Also requires chaosValueByName to be present, not just a fresh
+     fetchedAt — a rate cached by an older version of this file (before
+     chaosValueByName existed) would otherwise be served as-is for up to
+     CACHE_MINUTES, silently reintroducing "no rate for this currency" for
+     everything but chaos/divine until it happened to expire on its own.
+     Self-heals immediately instead of needing the cache manually cleared
+     or waiting out the window. */
   const ageOk =
-    cached && Date.now() - cached.fetchedAt < CACHE_MINUTES * 60 * 1000;
+    cached && cached.chaosValueByName && Date.now() - cached.fetchedAt < CACHE_MINUTES * 60 * 1000;
   if (ageOk) {
     LOG("using cached rate for", game);
     return cached;
   }
 
-  const fresh = await fetchDivineInChaos(game);
+  const fresh = await fetchCurrencyRates(game);
   await chrome.storage.local.set({ [cacheKey]: fresh });
   LOG("fetched fresh rate for", game, fresh);
   return fresh;
@@ -106,25 +152,34 @@ async function getCurrencyRate(game) {
      https://poe.ninja/poe1/api/economy/stash/current/item/overview
        ?league=<league>&type=UniqueWeapon        (singular "Weapon")
 
-   PoE1-only for now. PoE2 *does* track unique items too (its economy nav has
-   an "Equipment" section, easy to miss because the sidebar only renders it
-   once scrolled into view) at the same path with pluralised type names
-   (type=UniqueWeapons) — but its response uses a single `primaryValue`
-   field instead of PoE1's explicit `chaosValue`/`divineValue`, and we
-   haven't confirmed what unit/scale that's actually in. Guessing wrong here
-   means showing a confidently-wrong price, which is worse than showing
-   nothing — so PoE2 stays unsupported until that's verified for real.
+   The two games' responses use different shapes for the price itself: PoE1
+   gives explicit `chaosValue`/`divineValue` fields; PoE2 gives a single
+   `primaryValue` instead. Confirmed live (2026-09, loaded poe.ninja in a
+   real browser with the PoE2 tab selected) that `primaryValue` is
+   denominated in divine, matching that response's own `core.primary` field
+   — e.g. "The Ordained" showed as "4.0" next to the divine-orb icon for a
+   raw `primaryValue: 4`, and "Quill Rain" showed "3.0" divine for
+   `primaryValue: 3`. This mattered to check for real rather than assume:
+   PoE2's divine-to-chaos ratio is only ~11:1 (vs PoE1's ~200:1), so a
+   wrong-unit guess wouldn't have been an obviously-broken number, just a
+   quietly wrong one. normalizeItem() below converts both shapes into the
+   same {chaosValue, divineValue} pair so nothing downstream of this file
+   needs to know which game an entry came from.
 
-   Currency and Fragments are NOT in this list on purpose: poe.ninja prices
+   Currency and Fragments are NOT in either list on purpose: poe.ninja prices
    those through a structurally different endpoint (id + primaryValue
    relative to a "primary" currency, no display name in the line itself —
    see fetchDivineInChaos above), not this name/chaosValue shape. Bolting
    them on would need a separate id-to-name lookup we haven't verified, so
-   they stay unsupported rather than shipping a guess.
+   they stay unsupported rather than shipping a guess. PoE2 also has no
+   Corpse-equivalent category (Corpses are a PoE1 Necropolis-league
+   mechanic) and no gem-price entry at all — confirmed live that PoE2's
+   "Uncut Gems"/"Lineage Gems" pages have no "Trade" link on any row (see
+   the Trade-button rule below), unlike PoE1's SkillGem/ImbuedGem.
 
    Each `type=` value here was verified for real (curl'd against poe.ninja's
-   live API, checked for actual `name`/`chaosValue` data) before being added
-   — never add one on a guess; a wrong type string 404s. fetchPriceCategory
+   live API, checked for actual `name`/price data) before being added —
+   never add one on a guess; a wrong type string 404s. fetchPriceCategory
    below tolerates that (Promise.allSettled, one bad category just logs and
    drops out) so a typo can't take down every other category's prices, but
    the goal is still zero 404s in normal operation.
@@ -135,7 +190,8 @@ async function getCurrencyRate(game) {
    to a trade search, against its Tattoos page, which has no Trade column at
    all), there's no official trade-site search for that item type, so no
    bookmark could ever be titled with that name — the price entries would
-   just be dead weight in storage and never match anything. Corpses cleared
+   just be dead weight in storage and never match anything. Corpses (PoE1)
+   and every Unique* category below (PoE2, each checked live 2026-09) cleared
    that bar; before adding another category, check for the Trade button.
 
    One item name can have several price entries: different link counts, mod
@@ -149,88 +205,159 @@ async function getCurrencyRate(game) {
    guarantee it matches your specific item.
    ------------------------------------------------------------------------- */
 
-const PRICE_CATEGORIES = [
-  "UniqueWeapon", "UniqueArmour", "UniqueAccessory", "UniqueFlask", "UniqueJewel",
-  "ForbiddenJewel", "ShrineBelt", "UniqueTincture", "UniqueRelic",
-  "SkillGem", "ImbuedGem", "Corpse",
-];
-
-/* The category-slug half of an item's own poe.ninja page URL — each one
-   verified 2026-08 by checking a real detailsId from that category resolves
-   at https://poe.ninja/poe1/economy/<league-slug>/<category-slug>/<detailsId>.
-   Not derivable from PRICE_CATEGORIES by a simple rule (plurals aren't
-   consistent — "Armour" -> "armours" but "SkillGem" -> "skill-gems", not
-   "skillgems"), so this is spelled out by hand rather than guessed. */
-const PRICE_CATEGORY_SLUGS = {
-  UniqueWeapon: "unique-weapons",
-  UniqueArmour: "unique-armours",
-  UniqueAccessory: "unique-accessories",
-  UniqueFlask: "unique-flasks",
-  UniqueJewel: "unique-jewels",
-  ForbiddenJewel: "forbidden-jewels",
-  ShrineBelt: "shrine-belts",
-  UniqueTincture: "unique-tinctures",
-  UniqueRelic: "unique-relics",
-  SkillGem: "skill-gems",
-  ImbuedGem: "imbued-gems",
-  Corpse: "corpses",
+const PRICE_CATEGORIES = {
+  poe1: [
+    "UniqueWeapon", "UniqueArmour", "UniqueAccessory", "UniqueFlask", "UniqueJewel",
+    "ForbiddenJewel", "ShrineBelt", "UniqueTincture", "UniqueRelic",
+    "SkillGem", "ImbuedGem", "Corpse",
+  ],
+  /* Each verified live 2026-09 against poe.ninja's PoE2 economy tab: real
+     data at this type= string, a "Trade" link on every row (see the rule
+     above), and prices shown in divine (see normalizeItem's own note). */
+  poe2: [
+    "UniqueWeapons", "UniqueArmours", "UniqueAccessories", "UniqueFlasks",
+    "UniqueCharms", "UniqueJewels", "UniqueSanctumRelics", "UniqueTablets",
+  ],
 };
 
-async function fetchPriceCategory(league, category) {
+/* The category-slug half of an item's own poe.ninja page URL — each one
+   verified by checking a real detailsId from that category resolves at
+   https://poe.ninja/<game>/economy/<league-slug>/<category-slug>/<detailsId>.
+   Not derivable from PRICE_CATEGORIES by a simple rule (plurals aren't
+   consistent — "Armour" -> "armours" but "SkillGem" -> "skill-gems", not
+   "skillgems"; PoE2's "UniqueSanctumRelics" type= maps to the plain
+   "unique-relics" slug, not "unique-sanctum-relics" — found by inspecting
+   the site's own network request for its Unique Relics tab, since the
+   plural-of-type-name guess 404s), so this is spelled out by hand rather
+   than guessed. */
+const PRICE_CATEGORY_SLUGS = {
+  poe1: {
+    UniqueWeapon: "unique-weapons",
+    UniqueArmour: "unique-armours",
+    UniqueAccessory: "unique-accessories",
+    UniqueFlask: "unique-flasks",
+    UniqueJewel: "unique-jewels",
+    ForbiddenJewel: "forbidden-jewels",
+    ShrineBelt: "shrine-belts",
+    UniqueTincture: "unique-tinctures",
+    UniqueRelic: "unique-relics",
+    SkillGem: "skill-gems",
+    ImbuedGem: "imbued-gems",
+    Corpse: "corpses",
+  },
+  poe2: {
+    UniqueWeapons: "unique-weapons",
+    UniqueArmours: "unique-armours",
+    UniqueAccessories: "unique-accessories",
+    UniqueFlasks: "unique-flasks",
+    UniqueCharms: "unique-charms",
+    UniqueJewels: "unique-jewels",
+    UniqueSanctumRelics: "unique-relics",
+    UniqueTablets: "unique-tablets",
+  },
+};
+
+/* poe.ninja's item-detail pages want a lowercased league slug, but the two
+   games join multi-word league names differently — verified live 2026-09:
+   PoE1 hyphenates ("Allflame" -> "allflame", a single word so unconfirmed
+   for a real multi-word PoE1 league); PoE2 just strips spaces entirely
+   ("Runes of Aldur" -> "runesofaldur", "Standard" -> "standard", "Hardcore"
+   -> "hardcore"). Both games' LEAGUE_OVERRIDE default (the current temp
+   league, always first in /leagues) resolves to a name this rule handles
+   correctly. Hardcore leagues are a known exception on PoE2 (its own nav
+   shows "HC Runes of Aldur" -> "runesofaldurhc" — the HC marker moves to
+   the end rather than staying a prefix) and previous-league short names are
+   another ("Fate of the Vaal" -> just "vaal") — neither is reachable
+   through LEAGUE_OVERRIDE's default, so a wrong guess there only 404s the
+   outbound poe.ninja link, same bounded blast radius the PoE1-only version
+   of this comment already accepted for Hardcore. */
+function leagueSlugFor(game, league) {
+  return game === "poe2"
+    ? league.toLowerCase().replace(/\s+/g, "")
+    : league.toLowerCase().replace(/\s+/g, "-");
+}
+
+async function fetchPriceCategory(game, league, category) {
   const url =
-    `https://poe.ninja/poe1/api/economy/stash/current/item/overview` +
+    `https://poe.ninja/${game}/api/economy/stash/current/item/overview` +
     `?league=${encodeURIComponent(league)}&type=${category}`;
   const data = await fetchJson(url);
   return data.lines ?? [];
 }
 
-async function getItemPriceIndex() {
-  const cacheKey = "itemPrices_poe1";
+/* Normalizes one poe.ninja line item, from either game's shape, into the
+   one shape everything downstream of this file (prices.js, bookmarks.js)
+   reads — so callers never need to branch on which game an entry came
+   from. `divineInChaos` is only used for PoE2's primaryValue-in-divine
+   conversion (see the note above PRICE_CATEGORIES); PoE1 lines already
+   carry both chaosValue and divineValue directly and ignore it. */
+function normalizeItem(game, it, category, leagueSlug, divineInChaos) {
+  const chaosValue = game === "poe2" ? it.primaryValue * divineInChaos : it.chaosValue;
+  const divineValue = game === "poe2" ? it.primaryValue : it.divineValue;
+
+  return {
+    name: it.name,
+    baseType: it.baseType,
+    chaosValue,
+    divineValue,
+    listingCount: it.listingCount ?? it.count ?? 0,
+    /* Gems only (PoE1) — absent entirely on non-gem items, and absent
+       (rather than 0/false) on a gem itself when quality is 0 or it isn't
+       corrupted. PoE2 has no gem category here (see the note above
+       PRICE_CATEGORIES), so these are always absent for a PoE2 entry. */
+    gemLevel: it.gemLevel,
+    gemQuality: it.gemQuality,
+    corrupted: it.corrupted,
+    ninjaUrl: it.detailsId
+      ? `https://poe.ninja/${game}/economy/${leagueSlug}/${PRICE_CATEGORY_SLUGS[game][category]}/${it.detailsId}`
+      : null,
+    /* poe.ninja's own 7-day trend line — a series of % change values
+       relative to the oldest point (always 0), not absolute chaos prices.
+       Verified 2026-08 against the live endpoint (a real Headhunter entry
+       came back `{ totalChange: 9.09, data: [0, 3.31, -9.20, -8.01, -3.68,
+       8.90, 9.09] }`). totalChange is poe.ninja's own summary number for
+       the same series (not always exactly the last data point), kept
+       alongside it rather than re-derived. Can be a short or empty array
+       for a thinly-traded item — callers check length before drawing
+       anything with it. */
+    sparkline: it.sparkLine?.data ?? [],
+    sparklineChange: it.sparkLine?.totalChange ?? null,
+  };
+}
+
+async function getItemPriceIndex(game) {
+  const cacheKey = `itemPrices_${game}`;
   const stored = await chrome.storage.local.get(cacheKey);
   const cached = stored[cacheKey];
 
   const ageOk = cached && Date.now() - cached.fetchedAt < CACHE_MINUTES * 60 * 1000;
   if (ageOk) return cached;
 
-  const league = await resolveLeague("poe1");
-  /* poe.ninja's own item-detail pages want a lowercased, hyphenated league
-     slug — verified 2026-08 for single-word leagues ("Allflame" ->
-     "allflame", "Standard" -> "standard"), which is what LEAGUE_OVERRIDE's
-     default always resolves to. Multi-word Hardcore league slugs are
-     unverified; a wrong guess there just means a poe.ninja link 404s,
-     nothing breaks in the extension itself. */
-  const leagueSlug = league.toLowerCase().replace(/\s+/g, "-");
+  const league = await resolveLeague(game);
+  const leagueSlug = leagueSlugFor(game, league);
+  /* Only PoE2 needs this — its lines carry a single primaryValue in divine,
+     not PoE1's already-split chaosValue/divineValue — but it's cheap either
+     way since getCurrencyRate has its own 15-minute cache shared with the
+     chaos<->divine badge feature, so this rarely triggers a real fetch. */
+  const { divineInChaos } = game === "poe2" ? await getCurrencyRate(game) : {};
 
+  const categories = PRICE_CATEGORIES[game];
   const results = await Promise.allSettled(
-    PRICE_CATEGORIES.map((c) => fetchPriceCategory(league, c))
+    categories.map((c) => fetchPriceCategory(game, league, c))
   );
   const lists = results.map((r, i) => {
     if (r.status === "rejected") {
-      LOG(`price category "${PRICE_CATEGORIES[i]}" failed, skipping:`, r.reason);
+      LOG(`price category "${categories[i]}" failed, skipping:`, r.reason);
       return [];
     }
-    return r.value.map((it) => ({ ...it, category: PRICE_CATEGORIES[i] }));
+    return r.value.map((it) => normalizeItem(game, it, categories[i], leagueSlug, divineInChaos));
   });
 
-  const items = lists.flat().map((it) => ({
-    name: it.name,
-    baseType: it.baseType,
-    chaosValue: it.chaosValue,
-    divineValue: it.divineValue,
-    listingCount: it.listingCount ?? it.count ?? 0,
-    /* Gems only — absent entirely on non-gem items, and absent (rather than
-       0/false) on a gem itself when quality is 0 or it isn't corrupted. */
-    gemLevel: it.gemLevel,
-    gemQuality: it.gemQuality,
-    corrupted: it.corrupted,
-    ninjaUrl: it.detailsId
-      ? `https://poe.ninja/poe1/economy/${leagueSlug}/${PRICE_CATEGORY_SLUGS[it.category]}/${it.detailsId}`
-      : null,
-  }));
+  const items = lists.flat();
 
   const fresh = { items, league, fetchedAt: Date.now() };
   await chrome.storage.local.set({ [cacheKey]: fresh });
-  LOG(`fetched ${items.length} item prices (${league})`);
+  LOG(`fetched ${items.length} item prices (${game}, ${league})`);
   return fresh;
 }
 
@@ -259,7 +386,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "GET_ITEM_PRICE_INDEX") return; // not ours, ignore
 
-  getItemPriceIndex()
+  const game = msg.game === "poe2" ? "poe2" : "poe1";
+
+  getItemPriceIndex(game)
     .then((data) => sendResponse({ ok: true, data }))
     .catch((err) => sendResponse({ ok: false, error: String(err) }));
 

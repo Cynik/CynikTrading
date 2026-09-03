@@ -5,12 +5,18 @@
    script files into a fake browser (a stub `chrome.storage`, a stub `window`)
    and checks the logic that would be miserable to verify by clicking around:
    URL parsing, league resolution, the filtered-folder reorder, storage CRUD
-   for every tab, and Better Trading import/export compatibility.
+   for every tab, Better Trading import/export compatibility, and the
+   background service worker's own chaos<->divine rate arithmetic (loaded
+   into the same sandbox, with a stubbed `fetch`, since it's pure once the
+   network call is faked out and it's the highest-risk math in the codebase
+   — every on-page price conversion and every "poe.ninja average" badge
+   ultimately traces back to it).
 
    It cannot test anything that needs a real page — the panel rendering, the
    selectors, drag and drop. Those still need you and DevTools.
 
-   Run it after any change to store.js, location.js or exchange.js.
+   Run it after any change to store.js, location.js, exchange.js, or
+   service-worker.js's rate/league logic.
    ========================================================================= */
 
 /* Load the real content-script files in a fake browser and exercise the
@@ -34,7 +40,25 @@ const chrome = {
     },
     onChanged: { addListener: () => {} },
   },
+  runtime: {
+    onMessage: { addListener: () => {} }, // service-worker.js registers two of these at load time
+  },
 };
+
+/* Keyed by a substring of the requested URL -> the JSON body to hand back
+   (or a function(url) returning it, for a scenario that needs to branch on
+   the league in the URL). Set per test case below; service-worker.js's own
+   fetchJson() is what actually calls this. */
+let mockFetchResponses = {};
+async function mockFetch(url) {
+  for (const [match, respond] of Object.entries(mockFetchResponses)) {
+    if (url.includes(match)) {
+      const data = typeof respond === "function" ? respond(url) : respond;
+      return { ok: true, status: 200, statusText: "OK", json: async () => data };
+    }
+  }
+  throw new Error("logic-test.js: no mockFetchResponses entry matches " + url);
+}
 
 const sandbox = {
   chrome, console,
@@ -43,6 +67,7 @@ const sandbox = {
   btoa: (s) => Buffer.from(s, "latin1").toString("base64"),
   atob: (s) => Buffer.from(s, "base64").toString("latin1"),
   Math, Date, JSON, Map, Set, Promise, Array, Object, String, Number, URL, Error,
+  setTimeout, clearTimeout, AbortController, fetch: mockFetch,
 };
 sandbox.globalThis = sandbox;
 sandbox.window = sandbox;   // in a real content script window IS the global
@@ -51,6 +76,10 @@ vm.createContext(sandbox);
 for (const f of ["store.js", "location.js", "exchange.js"]) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "content", f), "utf8"), sandbox, { filename: f });
 }
+/* Not an IIFE like the content scripts above — its top-level functions
+   (fetchCurrencyRates, resolveLeague, ...) land directly on the sandbox
+   global, the same way `window.PH` does for the others. */
+vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "background", "service-worker.js"), "utf8"), sandbox, { filename: "service-worker.js" });
 const PH = sandbox.PH;
 
 let pass = 0, fail = 0;
@@ -244,6 +273,170 @@ check("created an Imported folder", migrated.length===1 && migrated[0].title==="
 const mt = await PH.store.getTrades(migrated[0].id);
 check("valid bookmark migrated", mt.length===1 && mt[0].location.slug==="oldslug", JSON.stringify(mt));
 check("legacy key removed", !("bookmarks" in store));
+
+console.log("\n== service worker: chaos<->divine rate arithmetic ==");
+// poe.ninja's "primary" currency differs by game (see the comment above
+// fetchCurrencyRates in service-worker.js) — these three cases are the
+// three branches that comment describes, exercised against the real
+// function rather than a re-implementation of its math.
+
+mockFetchResponses = {
+  "poe1/api/economy/leagues": [{ id: "Allflame" }],
+  "poe1/api/economy/exchange/current/overview": (url) => {
+    check("request URL carries the resolved league", url.includes("league=Allflame"), url);
+    return { core: { primary: "chaos", rates: { divine: 0.0047 } } };
+  },
+};
+const poe1Rate = await sandbox.fetchCurrencyRates("poe1");
+check("chaos-primary (PoE1): divine = 1 / rates.divine", Math.abs(poe1Rate.divineInChaos - 1 / 0.0047) < 0.001, poe1Rate.divineInChaos);
+check("league carried through from resolveLeague", poe1Rate.league === "Allflame");
+check("fetchedAt is a real timestamp", typeof poe1Rate.fetchedAt === "number" && poe1Rate.fetchedAt > 0);
+
+mockFetchResponses = {
+  "poe2/api/economy/leagues": [{ id: "Standard" }],
+  "poe2/api/economy/exchange/current/overview": { core: { primary: "divine", rates: { chaos: 11.15 } } },
+};
+const poe2Rate = await sandbox.fetchCurrencyRates("poe2");
+check("divine-primary (PoE2): divine = rates.chaos directly", poe2Rate.divineInChaos === 11.15);
+
+mockFetchResponses = {
+  "poe1/api/economy/leagues": [{ id: "Allflame" }],
+  "poe1/api/economy/exchange/current/overview": { core: { primary: "exalted", rates: { chaos: 20, divine: 0.1 } } },
+};
+const neitherRate = await sandbox.fetchCurrencyRates("poe1");
+check("neither primary: divine = rates.chaos / rates.divine", neitherRate.divineInChaos === 200, neitherRate.divineInChaos);
+
+mockFetchResponses = {
+  "poe1/api/economy/leagues": [{ id: "Settlers" }, { id: "Standard" }],
+  "poe1/api/economy/exchange/current/overview": { core: { primary: "chaos", rates: { divine: 0.005 } } },
+};
+const multiLeague = await sandbox.fetchCurrencyRates("poe1");
+check("resolveLeague picks the first (current temp) league in the list", multiLeague.league === "Settlers", multiLeague.league);
+
+mockFetchResponses = {
+  "poe1/api/economy/leagues": [{ id: "Allflame" }],
+  "poe1/api/economy/exchange/current/overview": { core: { primary: "chaos", rates: { divine: 0 } } },
+};
+let nonsenseRateThrew = false;
+try { await sandbox.fetchCurrencyRates("poe1"); } catch { nonsenseRateThrew = true; }
+check("a divide-by-zero rate throws instead of returning Infinity", nonsenseRateThrew);
+
+// chaosValueByName: the actual fix for a real reported bug — PoE2 listings
+// commonly get priced in currencies other than chaos/divine (Orb of
+// Alchemy, Gemcutter's Prism), and a bookmarked/saved search where every
+// listing used one of those previously captured no price at all, since
+// only chaos/divine had a real rate to convert with. Mock data shaped like
+// the real response (verified live 2026-09): `items` maps id -> display
+// name, `lines` gives each id's own primaryValue in the primary currency's
+// units.
+mockFetchResponses = {
+  "poe1/api/economy/leagues": [{ id: "Allflame" }],
+  "poe1/api/economy/exchange/current/overview": {
+    core: { primary: "chaos", rates: { divine: 0.005 } },
+    items: [{ id: "chaos", name: "Chaos Orb" }, { id: "gcp", name: "Gemcutter's Prism" }],
+    lines: [{ id: "chaos", primaryValue: 1 }, { id: "gcp", primaryValue: 1.75 }],
+  },
+};
+const poe1Rates = await sandbox.fetchCurrencyRates("poe1");
+check("poe1 chaosValueByName: primaryValue is already in chaos (primary=chaos)", poe1Rates.chaosValueByName["Gemcutter's Prism"] === 1.75);
+
+mockFetchResponses = {
+  "poe2/api/economy/leagues": [{ id: "Runes of Aldur" }],
+  "poe2/api/economy/exchange/current/overview": {
+    core: { primary: "divine", rates: { chaos: 11.3 } },
+    items: [{ id: "divine", name: "Divine Orb" }, { id: "alch", name: "Orb of Alchemy" }],
+    lines: [{ id: "divine", primaryValue: 1 }, { id: "alch", primaryValue: 0.001438 }],
+  },
+};
+const poe2Rates = await sandbox.fetchCurrencyRates("poe2");
+check(
+  "poe2 chaosValueByName: primaryValue is in divine, converted via divineInChaos (primary=divine)",
+  Math.abs(poe2Rates.chaosValueByName["Orb of Alchemy"] - 0.001438 * 11.3) < 1e-9,
+  poe2Rates.chaosValueByName["Orb of Alchemy"],
+);
+check("a currency with no items entry is silently skipped, not crashed on", !("gcp" in poe2Rates.chaosValueByName));
+
+// getCurrencyRate's cache must self-heal from an old-shape entry — caught
+// live: a rate cached by a pre-chaosValueByName version of this file,
+// still within its 15-minute freshness window, was being served as-is,
+// silently reintroducing "no rate for this currency" for everything but
+// chaos/divine until the cache happened to expire on its own.
+store["rate_poe2"] = { divineInChaos: 9.81, league: "Runes of Aldur", fetchedAt: Date.now() }; // old shape, no chaosValueByName, fresh timestamp
+mockFetchResponses = {
+  "poe2/api/economy/leagues": [{ id: "Runes of Aldur" }],
+  "poe2/api/economy/exchange/current/overview": {
+    core: { primary: "divine", rates: { chaos: 9.81 } },
+    items: [{ id: "divine", name: "Divine Orb" }, { id: "exalted", name: "Exalted Orb" }],
+    lines: [{ id: "divine", primaryValue: 1 }, { id: "exalted", primaryValue: 0.002439 }],
+  },
+};
+const healedRate = await sandbox.getCurrencyRate("poe2");
+check("a fresh-but-old-shape cached rate is refetched, not served as-is", "chaosValueByName" in healedRate && healedRate.chaosValueByName["Exalted Orb"] != null);
+delete store["rate_poe2"]; // don't leak this cache entry into later tests
+
+console.log("\n== service worker: item price index (poe.ninja averages) ==");
+// normalizeItem is what converts each game's own poe.ninja shape into the
+// one shape prices.js/bookmarks.js read — PoE1's line already carries
+// chaosValue/divineValue directly; PoE2's carries a single primaryValue
+// (confirmed live 2026-09 to be denominated in divine, see the comment
+// above PRICE_CATEGORIES) that has to be converted using the exchange rate.
+const poe1Line = sandbox.normalizeItem(
+  "poe1",
+  { name: "Headhunter", baseType: "Leather Belt", chaosValue: 4500, divineValue: 21.2, listingCount: 12, detailsId: "headhunter" },
+  "UniqueAccessory", "allflame", undefined,
+);
+check("poe1 entry keeps its own chaosValue/divineValue untouched", poe1Line.chaosValue === 4500 && poe1Line.divineValue === 21.2);
+check("poe1 ninjaUrl uses the hand-mapped slug for its category", poe1Line.ninjaUrl === "https://poe.ninja/poe1/economy/allflame/unique-accessories/headhunter", poe1Line.ninjaUrl);
+
+const poe2Line = sandbox.normalizeItem(
+  "poe2",
+  { name: "Redbeak", baseType: "Shortsword", primaryValue: 6741, listingCount: 9, detailsId: "redbeak-shortsword" },
+  "UniqueWeapons", "runesofaldur", 11.3,
+);
+check("poe2 divineValue is primaryValue as-is", poe2Line.divineValue === 6741);
+check("poe2 chaosValue is primaryValue converted via divineInChaos", poe2Line.chaosValue === 6741 * 11.3, poe2Line.chaosValue);
+check("poe2 ninjaUrl carries the poe2 game segment and its own slug", poe2Line.ninjaUrl === "https://poe.ninja/poe2/economy/runesofaldur/unique-weapons/redbeak-shortsword", poe2Line.ninjaUrl);
+
+// UniqueSanctumRelics -> "unique-relics" is the one PRICE_CATEGORY_SLUGS
+// irregularity that isn't derivable from the type string at all (found by
+// inspecting poe.ninja's own network request, since the plural-of-type-name
+// guess "unique-sanctum-relics" 404s) — worth its own check since a typo
+// here would silently 404 every Sanctum Relic's outbound link.
+const poe2RelicLine = sandbox.normalizeItem(
+  "poe2", { name: "The Last Flame", primaryValue: 3568, detailsId: "the-last-flame" }, "UniqueSanctumRelics", "standard", 11.3,
+);
+check("UniqueSanctumRelics maps to the irregular unique-relics slug", poe2RelicLine.ninjaUrl.includes("/unique-relics/"), poe2RelicLine.ninjaUrl);
+
+// leagueSlugFor: the two games join a multi-word league name differently
+// (verified live 2026-09 against poe.ninja's own nav links) — PoE1
+// hyphenates, PoE2 strips spaces entirely.
+check("leagueSlugFor hyphenates for poe1", sandbox.leagueSlugFor("poe1", "Settlers of Kalguur") === "settlers-of-kalguur");
+check("leagueSlugFor strips spaces for poe2", sandbox.leagueSlugFor("poe2", "Runes of Aldur") === "runesofaldur");
+
+// getItemPriceIndex("poe2") end to end: resolves its own league, fetches its
+// own currency rate to convert primaryValue, fetches each category (missing
+// mocks for the other 7 just reject and get skipped — same
+// Promise.allSettled tolerance real 404s get), and caches under its own key
+// so it never collides with the poe1 index.
+mockFetchResponses = {
+  "poe2/api/economy/leagues": [{ id: "Runes of Aldur" }],
+  "poe2/api/economy/exchange/current/overview": { core: { primary: "divine", rates: { chaos: 11.3 } } },
+  // Every PoE2 category gets a response (even if empty) so this exercises a
+  // clean full fetch, not the one-category-404-tolerated path — that
+  // tolerance is real (Promise.allSettled) but isn't what this test is for.
+  "type=UniqueWeapons": { lines: [{ name: "Quill Rain", baseType: "Runeforged Shortbow", primaryValue: 3, listingCount: 52, detailsId: "quill-rain-runeforged-shortbow" }] },
+  "type=UniqueArmours": { lines: [] },
+  "type=UniqueAccessories": { lines: [] },
+  "type=UniqueFlasks": { lines: [] },
+  "type=UniqueCharms": { lines: [] },
+  "type=UniqueJewels": { lines: [] },
+  "type=UniqueSanctumRelics": { lines: [] },
+  "type=UniqueTablets": { lines: [] },
+};
+const poe2Index = await sandbox.getItemPriceIndex("poe2");
+check("poe2 index resolves its own current league", poe2Index.league === "Runes of Aldur");
+check("poe2 index converts the one mocked category's primaryValue to chaos", poe2Index.items.find((i) => i.name === "Quill Rain")?.chaosValue === 3 * 11.3);
+check("poe2 index cached under its own key, separate from poe1's", "itemPrices_poe2" in store && !("itemPrices_poe1" in store));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

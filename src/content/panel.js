@@ -21,6 +21,8 @@ PH.panel = (() => {
 
   let root = null;
   let bodyEl = null;
+  let ratePill = null;
+  let rateLines = ["No trade-API calls made yet this session.", 'Use "Search this exact item" to check.'];
   let currentTab = "bookmarks";
   const renderers = {}; // tab id -> function(container)
 
@@ -79,19 +81,18 @@ PH.panel = (() => {
     renderBody();
   }
 
-  function renderBody() {
+  async function renderBody() {
     if (!bodyEl) return;
     const renderer = renderers[currentTab];
     if (!renderer) { bodyEl.textContent = ""; return; }
 
     const token = ++renderToken;
     const scratch = document.createElement("div");
-    Promise.resolve(renderer(scratch)).then(() => {
-      if (token !== renderToken) return; // a newer render started; drop this one
-      /* Whatever a hover popup was anchored to is about to be replaced. */
-      PH.ui.closeHoverPopup();
-      bodyEl.replaceChildren(...scratch.childNodes);
-    });
+    await renderer(scratch);
+    if (token !== renderToken) return; // a newer render started; drop this one
+    /* Whatever a hover popup was anchored to is about to be replaced. */
+    PH.ui.closeHoverPopup();
+    bodyEl.replaceChildren(...scratch.childNodes);
   }
 
   /* Called by the tabs whenever they change something, and by main.js when
@@ -101,53 +102,49 @@ PH.panel = (() => {
   }
 
   function build() {
-    root = document.createElement("div");
-    root.id = "ph-panel";
-    root.setAttribute("role", "complementary");
-    root.setAttribute("aria-label", "PoE Trade Helper");
+    const { el } = PH.ui;
 
     /* --- header: collapse chevron + title ------------------------------- */
-    const header = document.createElement("div");
-    header.className = "ph-header";
+    const collapse = el("button", {
+      class: "ph-collapse",
+      type: "button",
+      onclick: () => setCollapsed(!isCollapsed()),
+    });
+    const title = el("div", { class: "ph-title", text: "Trade Helper" });
 
-    const collapse = document.createElement("button");
-    collapse.className = "ph-collapse";
-    collapse.type = "button";
-    collapse.addEventListener("click", () => setCollapsed(!isCollapsed()));
+    /* Always visible, like Awakened PoE Trade's own rate-limit indicator —
+       but honest about not having real numbers yet rather than fabricating
+       a "0/0" reading before the extension has actually made a trade-API
+       call (see rateLines' initial value below and ratelimit-overlay.js,
+       which is what replaces it with real data). The lines shown on hover
+       are read lazily via the `rateLines` closure, since this pill is built
+       once here and never recreated, but its content keeps changing for as
+       long as the panel stays open. */
+    ratePill = el("span", { class: "ph-ratelimit-pill", text: "Rate" });
+    PH.ui.hoverPopup(ratePill, () => rateLines, { title: "Trade-API rate limit" });
 
-    const title = document.createElement("div");
-    title.className = "ph-title";
-    title.textContent = "Trade Helper";
-
-    header.append(collapse, title);
+    const header = el("div", { class: "ph-header" }, collapse, title, ratePill);
 
     /* --- tab strip ------------------------------------------------------ */
-    const tabs = document.createElement("div");
-    tabs.className = "ph-tabs";
-    tabs.setAttribute("role", "tablist");
-
-    for (const tab of TABS) {
-      const btn = document.createElement("button");
-      btn.className = "ph-tab";
-      btn.type = "button";
-      btn.dataset.tab = tab.id;
-      btn.setAttribute("role", "tab");
-      btn.innerHTML = "";
-      const glyph = document.createElement("span");
-      glyph.className = "ph-tab-glyph";
-      glyph.textContent = tab.glyph;
-      const text = document.createElement("span");
-      text.textContent = tab.label;
-      btn.append(glyph, text);
-      btn.addEventListener("click", () => selectTab(tab.id));
-      tabs.appendChild(btn);
-    }
+    const tabButtons = TABS.map((tab) =>
+      el("button", {
+        class: "ph-tab",
+        type: "button",
+        dataset: { tab: tab.id },
+        role: "tab",
+        onclick: () => selectTab(tab.id),
+      },
+        el("span", { class: "ph-tab-glyph", text: tab.glyph }),
+        el("span", { text: tab.label })
+      )
+    );
+    const tabs = el("div", { class: "ph-tabs", role: "tablist" }, ...tabButtons);
 
     /* --- body ----------------------------------------------------------- */
-    bodyEl = document.createElement("div");
-    bodyEl.className = "ph-body";
+    bodyEl = el("div", { class: "ph-body" });
 
-    root.append(header, tabs, bodyEl);
+    root = el("div", { id: "ph-panel", role: "complementary", "aria-label": "PoE Trade Helper" },
+      header, tabs, bodyEl);
     document.body.appendChild(root);
 
     document.body.classList.add("ph-active");
@@ -155,6 +152,23 @@ PH.panel = (() => {
 
     const saved = localStorage.getItem(TAB_KEY);
     currentTab = renderers[saved] ? saved : "bookmarks";
+  }
+
+  /* Called by ratelimit-overlay.js on every render pass (both right after a
+     real trade-API response and on its own once-a-second decay tick — see
+     that file). `status` is null (nothing recorded yet this session, or
+     everything's decayed back to untouched) or { hot, lines } — `hot` true
+     once any endpoint is within the warning margin or already in cooldown,
+     turning the pill from its normal gold to red; `lines` is what the hover
+     popup shows, GGG's own policy name plus one line per rate-limit window.
+     The pill itself never hides — falls back to the same "no data yet"
+     lines it starts with instead of going blank. */
+  function setRateLimit(status) {
+    if (!ratePill) return;
+    rateLines = status?.lines?.length
+      ? status.lines
+      : ["No trade-API calls made yet this session.", 'Use "Search this exact item" to check.'];
+    ratePill.classList.toggle("ph-ratelimit-hot", Boolean(status?.hot));
   }
 
   function mount() {
@@ -170,5 +184,5 @@ PH.panel = (() => {
     return true;
   }
 
-  return { mount, refresh, selectTab, registerTab, setCollapsed, isCollapsed };
+  return { mount, refresh, registerTab, setRateLimit };
 })();

@@ -127,17 +127,34 @@ PH.ui = (() => {
     return el("div", { class: "ph-empty", text: message });
   }
 
+  /* Community-shorthand abbreviations for currencies players commonly
+     trade in but that readCurrency (prices.js) can only ever give us as
+     poe.ninja/GGG's own full display name — specified by the developer,
+     not guessed, since there's no reliable rule to derive "ex"/"alch"/
+     "gcp" from a display name in general (e.g. "Orb of Alchemy" -> "alch"
+     isn't a prefix or acronym of the full name). Anything not listed here
+     falls back to its real display name in formatPrice below rather than
+     an invented abbreviation. */
+  const CURRENCY_ABBREVIATIONS = {
+    "Exalted Orb": "ex",
+    "Orb of Alchemy": "alch",
+    "Gemcutter's Prism": "gcp",
+  };
+  const abbreviateCurrency = (name) => CURRENCY_ABBREVIATIONS[name] ?? name;
+
   /* Shared by anything displaying a { amount, currency } price from
      PH.prices — the trade-price badge in Bookmarks, and the saved-listing
      capture button. currency is only ever exactly "chaos" or "divine" for
      those two (see readCurrency in prices.js) — anything else is that
-     currency's own real display name (e.g. "Orb of Fusing"), shown as-is
-     rather than mislabelled as chaos, which is what this used to do for
-     every non-divine currency before readCurrency could tell them apart. */
+     currency's own real display name (e.g. "Orb of Fusing"), abbreviated
+     per CURRENCY_ABBREVIATIONS above when we have one, shown as-is
+     otherwise rather than mislabelled as chaos, which is what this used to
+     do for every non-divine currency before readCurrency could tell them
+     apart. */
   function formatPrice({ amount, currency }) {
     if (currency === "divine") return `${amount} div`;
     if (currency === "chaos") return `${amount}c`;
-    return `${amount} ${currency}`;
+    return `${amount} ${abbreviateCurrency(currency)}`;
   }
 
   /* ----------------------------------------------------------------------
@@ -156,14 +173,22 @@ PH.ui = (() => {
   /* Each entry in `lines` is a plain string, {text, class} to add an extra
      class (e.g. a price-change highlight) to just that line, or a DOM node
      (e.g. a sparkline, or a whole .ph-hover-grid of rows) to insert as-is
-     instead of wrapping it as a line. `title`, if given, renders as a small
-     uppercase label above everything else, separated by a hairline. */
+     instead of wrapping it as a line. `lines` may also be a function
+     returning that array, evaluated fresh on every hover instead of once at
+     call time — needed by a trigger built once up front (e.g. the panel
+     header's rate-limit pill, built in panel.js's build() and never rebuilt)
+     whose content still changes over the panel's lifetime; every other
+     caller just passes a plain array computed at render time, which still
+     works unchanged since a plain array isn't a function. `title`, if
+     given, renders as a small uppercase label above everything else,
+     separated by a hairline. */
   function hoverPopup(trigger, lines, { title } = {}) {
     const show = () => {
       closeHoverPopup();
+      const resolvedLines = typeof lines === "function" ? lines() : lines;
       const popup = el("div", { class: "ph-hover-popup" },
         title ? el("div", { class: "ph-hover-popup-title", text: title }) : null,
-        lines.map((line) => {
+        resolvedLines.map((line) => {
           if (line instanceof Node) return line;
           const isPlain = typeof line === "string";
           return el("div", {
@@ -345,8 +370,23 @@ PH.ui = (() => {
     return svg;
   }
 
+  /* The real results/filters container GGG's own page renders into — see
+     panel.js's own mount() check, which is where this convention comes
+     from. Scoping a query to this instead of the whole document skips
+     walking our own injected panel's DOM (which can be large: every
+     bookmarked folder and saved listing lives there) for selectors that
+     could never match inside it anyway — main.js's scan() and everything
+     it calls (tilde-wiring, price annotation, save-row enhancement) all
+     run on every DOM mutation, so that's a real, repeated cost. Falls
+     back to document itself if #trade isn't there yet, so a caller run
+     before mount() still gets its normal (slower but correct) whole-page
+     behavior rather than silently finding nothing. */
+  function tradeRoot() {
+    return document.getElementById("trade") ?? document;
+  }
+
   return {
     el, button, iconButton, menu, inlineForm, confirmRow, toast, empty, timeAgo, makeSortable, formatPrice,
-    hoverPopup, closeHoverPopup, sparklineSvg, icon,
+    hoverPopup, closeHoverPopup, sparklineSvg, icon, tradeRoot, abbreviateCurrency,
   };
 })();

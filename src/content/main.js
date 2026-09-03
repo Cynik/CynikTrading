@@ -50,8 +50,14 @@ function wireTildePrefix(input) {
 /* The trade site rewrites its own HTML constantly and changes the URL without
    a page load, so nothing can be done once at startup. */
 function scan() {
-  document.querySelectorAll(`${STAT_FILTER_INPUT}:not([${TILDE_MARK}])`).forEach(wireTildePrefix);
+  /* Cheap to call every time (mount() itself no-ops instantly once the
+     panel already exists) — this is what lets the panel still appear if
+     #trade's real content renders in slightly after document_idle fired,
+     since boot() otherwise only ever tries mounting once. */
+  PH.panel.mount();
+  PH.ui.tradeRoot().querySelectorAll(`${STAT_FILTER_INPUT}:not([${TILDE_MARK}])`).forEach(wireTildePrefix);
   PH.prices.annotate();
+  PH.prices.sortResultsByPrice();
   PH.saved.enhanceRows();
 }
 
@@ -82,13 +88,13 @@ const POLL_MS = 500;
 let lastPath = null;
 let pollTimer = null;
 /* Reset on every navigation; see checkResultsForPricing below. */
-let pricedThisVisit = false;
+let lastPricedRowId = null;
 
 async function checkLocation() {
   const path = window.location.pathname;
   if (path === lastPath) return;
   lastPath = path;
-  pricedThisVisit = false;
+  lastPricedRowId = null;
 
   await PH.store.noteLeague(PH.location.current());
   PH.panel.refresh();
@@ -97,20 +103,39 @@ async function checkLocation() {
 /* Once real results are showing for whatever search we're now on, ask
    Bookmarks to record a price observation if this happens to be a search
    we've saved, and ask Saved listings to do the same if this tab was
-   opened by "Search this exact item" — once per visit, not once per poll
-   tick. This is the same DOM the page already loaded on its own; nothing
-   is fetched or clicked to make this happen. */
+   opened by "Search this exact item". This is the same DOM the page
+   already loaded on its own; nothing is fetched or clicked to make this
+   happen.
+
+   Keyed off the current cheapest row's own data-id, not a one-shot "already
+   priced this visit" flag — the trade site's own Live Search updates
+   results in place with no navigation at all, so a flag reset only on URL
+   change meant a cheaper listing that appeared after the first capture (a
+   real report: a page sitting on Live Search surfaced a much cheaper
+   Exalted-priced listing than whatever was cheapest at initial load, but
+   the bookmark kept showing that stale first price indefinitely) never
+   got captured until the next full navigation. Re-checking whenever the
+   cheapest row's identity changes catches that; PH.store's own price
+   history already collapses a same-price recheck into a timestamp refresh
+   rather than a new slot, so calling this more often than "once per visit"
+   doesn't flood history even when the cheapest row keeps being the same
+   one across repeated poll ticks. */
 function checkResultsForPricing() {
-  if (pricedThisVisit) return;
-  if (!document.querySelector(".resultset > div.row[data-id]")) return;
-  pricedThisVisit = true;
+  const row = PH.prices.cheapestRowOnPage();
+  if (!row) return;
+  if (row.dataset.id === lastPricedRowId) return;
+  lastPricedRowId = row.dataset.id;
   PH.bookmarks.notePriceIfMatch();
   PH.saved.capturePendingPrice();
 }
 
 function startPolling() {
   if (pollTimer) return;
-  pollTimer = setInterval(() => { checkLocation(); checkResultsForPricing(); }, POLL_MS);
+  pollTimer = setInterval(() => {
+    checkLocation();
+    checkResultsForPricing();
+    PH.prices.refreshRateIfStale();
+  }, POLL_MS);
 }
 
 function stopPolling() {
@@ -137,13 +162,20 @@ async function boot() {
 
   const mounted = PH.panel.mount();
   if (!mounted) LOG("panel not mounted — the trade app isn't on this page");
+  await PH.rateLimitOverlay.init();
 
   await PH.prices.init();
 
   scan();
   watchDom();
 
-  startPolling();
+  /* Only start the interval if the tab already has focus — if it doesn't,
+     "focus" will fire startPolling() the normal way when it eventually
+     does. Starting unconditionally here would leak a permanent interval
+     for a tab opened in the background: blur can only stop what focus
+     already started, and a tab that's never been focused never fires
+     blur either. */
+  if (document.hasFocus()) startPolling();
   checkLocation();
   window.addEventListener("focus", startPolling);
   window.addEventListener("blur", stopPolling);
@@ -154,6 +186,7 @@ async function boot() {
       const next = changes.settings.newValue ?? {};
       tildeEnabled = next.tildePrefix !== false;
       PH.prices.setEnabled(next.showPriceConversion !== false);
+      PH.prices.setSortEnabled(next.sortByTruePrice !== false);
     }
     /* savedGroups on its own (not paired with a savedListings write) only
        happens for a pure group rename — every other group action

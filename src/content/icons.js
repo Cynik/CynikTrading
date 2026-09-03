@@ -98,5 +98,5 @@ PH.icons = (() => {
     };
   }
 
-  return { render, optionsFor, prettyName, label };
+  return { render, optionsFor, prettyName };
 })();

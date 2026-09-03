@@ -53,6 +53,16 @@ PH.bookmarks = (() => {
     const forThisGame = folders.filter((f) => (f.version ?? "1") === version);
     const visible = forThisGame.filter((f) => (showArchive() ? f.archivedAt : !f.archivedAt));
 
+    /* One shared fetch, up front, for every currently-open folder's trades
+       — readAll() already reads every folder's trades in a single call, so
+       each open folder independently re-fetching that same data (what
+       renderTrades used to do on its own) was pure repeated work once more
+       than one folder is open at a time. Only paid when something's
+       actually open, so a fully collapsed panel still costs nothing extra. */
+    const tradesByFolder = visible.some((f) => expanded().has(f.id))
+      ? (await PH.store.readAll()).trades
+      : null;
+
     container.append(toolbar(forThisGame));
 
     if (editing?.kind === "new-folder") {
@@ -71,7 +81,7 @@ PH.bookmarks = (() => {
       ));
     } else {
       const list = el("div", { class: "ph-folders" });
-      for (const folder of visible) list.append(folderRow(folder, context));
+      for (const folder of visible) list.append(folderRow(folder, context, tradesByFolder));
       makeSortable(list, {
         handleSelector: ".ph-grip",
         onReorder: async (ids) => {
@@ -126,7 +136,7 @@ PH.bookmarks = (() => {
 
   /* ----------------------------------------------------------- folder row */
 
-  function folderRow(folder, context) {
+  function folderRow(folder, context, tradesByFolder) {
     const isOpen = expanded().has(folder.id);
 
     const row = el("div", { class: "ph-folder", dataset: { id: folder.id } });
@@ -155,9 +165,10 @@ PH.bookmarks = (() => {
     const totalHistory = folder.totalCostHistory ?? [];
     const { badge: totalBadge, trendBadge: totalTrendBadge } = priceTrendUI(totalHistory, {
       badgeClass: "ph-folder-total",
-      formatLatest: (entry) => `Total Cost: ${formatChaosOrDivine(entry.amount)}`,
-      formatAmount: (entry) => formatChaosOrDivine(entry.amount),
+      formatLatest: (entry) => `Total Cost: ${formatChaosOrDivine(entry.amount, folder.version)}`,
+      formatAmount: (entry) => formatChaosOrDivine(entry.amount, folder.version),
       historyTitle: "Total cost history",
+      version: folder.version,
       trendTitle: (trend) =>
         trend.direction === "same"
           ? "Same total cost as the last time this folder was opened"
@@ -185,6 +196,7 @@ PH.bookmarks = (() => {
           PH.panel.refresh();
         } },
         "-",
+        { label: "Sort by price", onClick: () => sortFolderByPrice(folder) },
         { label: "Reset Total Cost trend", onClick: () => setEditing({ kind: "clear-total-cost", folderId: folder.id }) },
         { label: "Clear price history for this folder", onClick: () => setEditing({ kind: "clear-price-history", folderId: folder.id }) },
         "-",
@@ -225,9 +237,10 @@ PH.bookmarks = (() => {
     if (isOpen) {
       const body = el("div", { class: "ph-folder-body" });
       row.append(body);
-      /* Trades load per folder, so a panel with twenty collapsed folders
-         does one storage read instead of twenty. */
-      renderTrades(body, folder, context);
+      /* A collapsed folder never reaches here at all, so a panel with
+         twenty collapsed folders still costs nothing; render() already
+         fetched every open folder's trades in one shared call above. */
+      renderTrades(body, folder, context, tradesByFolder);
     }
 
     return row;
@@ -267,8 +280,10 @@ PH.bookmarks = (() => {
     return any ? total : null;
   }
 
-  async function renderTrades(body, folder, context) {
-    const trades = await PH.store.getTrades(folder.id);
+  async function renderTrades(body, folder, context, tradesByFolder) {
+    /* tradesByFolder is folderRow's shared, already-fetched map — the
+       fallback fetch below only matters if this is ever called without it. */
+    const trades = tradesByFolder ? (tradesByFolder[folder.id] ?? []) : await PH.store.getTrades(folder.id);
 
     /* Total Cost recomputes on every render of an open folder, same as the
        trade rows below it draw from this same `trades` — so what's shown
@@ -304,11 +319,11 @@ PH.bookmarks = (() => {
       body.append(el("div", { class: "ph-folder-empty", text: "Nothing saved here yet." }));
     }
 
-    /* poe.ninja only has item prices for PoE1 right now — see the note in
-       service-worker.js. Loaded once per folder, not once per row; PH.prices
-       caches it client-side too, so this is cheap after the first real
-       fetch. */
-    if ((folder.version ?? "1") === "1" && trades.some((t) => t.priceHistory?.length || t.priceAtSave)) {
+    /* poe.ninja has item prices for both games now, each with its own fixed
+       catalog — see PRICE_CATEGORIES in service-worker.js. Loaded once per
+       folder, not once per row; PH.prices caches it client-side too, so
+       this is cheap after the first real fetch. */
+    if (trades.some((t) => t.priceHistory?.length || t.priceAtSave)) {
       await PH.prices.loadPriceIndex();
     }
 
@@ -354,6 +369,7 @@ PH.bookmarks = (() => {
       formatLatest: formatPrice,
       formatAmount: formatPrice,
       historyTitle: "Price history",
+      version: folder.version,
       trendTitle: (trend) =>
         trend.direction === "same"
           ? "Same price as the last time this was checked"
@@ -369,12 +385,11 @@ PH.bookmarks = (() => {
     }
 
     /* Only attempted alongside priceBadge, shown when a match is available.
-       Best-effort name match against poe.ninja's data; PoE1 only (PH.prices'
-       index may already be loaded from a previously-rendered PoE1 folder, so
-       this game check has to happen here too, not just before loading it in
-       renderTrades). */
-    const isPoe1 = (folder.version ?? "1") === "1";
-    const ninja = isPoe1 && latest ? PH.prices.matchItem(trade.title) : null;
+       Best-effort name match against poe.ninja's data, whichever game's
+       index PH.prices currently has loaded (see loadPriceIndex — it's
+       always the index for the page's own current version, matching this
+       folder since folders only render for the game you're browsing). */
+    const ninja = latest ? PH.prices.matchItem(trade.title) : null;
     const avgBadge = ninja
       /* title:"" for the same reason as priceBadge above — this also sits
          inside the row's own <a> and would otherwise inherit its
@@ -385,7 +400,7 @@ PH.bookmarks = (() => {
       ? el("span", {
           class: `ph-trade-avg${ninja.ninjaUrl ? " ph-trade-avg-link" : ""}`,
           title: "",
-          text: `avg ${formatNinjaValue(ninja, latest.currency)}`,
+          text: `avg ${formatNinjaValue(ninja, folder.version)}`,
           /* Nested inside the row's own <a> (a link to the trade search), so
              this has to stop that click from also firing — a nested <a>
              here would be invalid HTML and browsers handle it
@@ -407,15 +422,32 @@ PH.bookmarks = (() => {
         })
       : null;
 
-    /* Only when there's actually somewhere to click — no ninjaUrl means
-       nothing happens on click, so a "click to view" popup would be
-       misleading. */
-    if (avgBadge && ninja.ninjaUrl) {
-      PH.ui.hoverPopup(avgBadge, ["Click to view on PoE Ninja"]);
+    /* The popup carries whatever we actually have: poe.ninja's own 7-day
+       trend line (same sparkline widget the local price-history popups
+       use, just fed poe.ninja's % values instead of our own chaos-
+       equivalent history) when there's enough of it to draw, and the
+       "click to view" hint only when there's really somewhere to click —
+       no ninjaUrl on its own would make that line misleading. */
+    const hasTrend = (ninja?.sparkline?.length ?? 0) >= 2;
+    if (avgBadge && (hasTrend || ninja.ninjaUrl)) {
+      const lines = [];
+      if (hasTrend) {
+        const change = ninja.sparklineChange ?? ninja.sparkline.at(-1);
+        const color = change > 0 ? "var(--ph-danger)" : change < 0 ? "#6fae5c" : "var(--ph-muted)";
+        lines.push(PH.ui.sparklineSvg(ninja.sparkline, color));
+        lines.push(`7-day trend: ${change > 0 ? "+" : ""}${change.toFixed(1)}%`);
+      }
+      if (ninja.ninjaUrl) lines.push("Click to view on PoE Ninja");
+      PH.ui.hoverPopup(avgBadge, lines, { title: "poe.ninja" });
     }
 
     const link = url
-      ? el("a", { class: "ph-trade-link", href: url },
+      /* onclick doesn't preventDefault — the link still navigates normally.
+         It only records that this click happened (see
+         PH.store.recordTradeLinkClick), since this tab has no way to read
+         a real rate-limit reading back from whatever request(s) that
+         navigation triggers on GGG's side. */
+      ? el("a", { class: "ph-trade-link", href: url, onclick: () => PH.store.recordTradeLinkClick() },
           el("span", { class: "ph-trade-title", text: trade.title }),
           priceGroup,
           avgBadge,
@@ -435,13 +467,17 @@ PH.bookmarks = (() => {
       menu([
         { label: "Copy URL", onClick: () => copyText(url, "URL copied") },
         trade.location.type === "search" && url
-          ? { label: "Open live search", onClick: () => window.open(PH.location.buildUrl(trade.location, league, { live: true }), "_blank") }
+          ? { label: "Open live search", onClick: () => {
+              PH.store.recordTradeLinkClick();
+              window.open(PH.location.buildUrl(trade.location, league, { live: true }), "_blank");
+            } }
           : null,
         "-",
         { label: "Rename", onClick: () => setEditing({ kind: "edit-trade", folderId: folder.id, tradeId: trade.id }) },
         { label: "Point at the search I'm on now", onClick: () => repointTrade(folder, trade) },
         { label: done ? "Mark as not done" : "Mark as done", onClick: async () => {
-          await PH.store.saveTrade(folder.id, { id: trade.id, completedAt: done ? null : new Date().toUTCString() });
+          const saved = await PH.store.saveTrade(folder.id, { id: trade.id, completedAt: done ? null : new Date().toUTCString() });
+          if (!saved) toast("That trade no longer exists.", { error: true });
           PH.panel.refresh();
         } },
         "-",
@@ -493,7 +529,8 @@ PH.bookmarks = (() => {
       placeholder: "Folder name",
       submitLabel: folder.id ? "Save" : "Create folder",
       onSubmit: async (title) => {
-        await PH.store.saveFolder({ ...folder, title, icon, version });
+        const saved = await PH.store.saveFolder({ ...folder, title, icon, version });
+        if (!saved) toast("That folder no longer exists.", { error: true });
         done();
       },
       onCancel: done,
@@ -534,7 +571,8 @@ PH.bookmarks = (() => {
         const location = { ...trade.location };
         if (pinLeague) location.league = pinLeague;
         else delete location.league;
-        await PH.store.saveTrade(folder.id, { id: trade.id, title, location });
+        const saved = await PH.store.saveTrade(folder.id, { id: trade.id, title, location });
+        if (!saved) toast("That trade no longer exists.", { error: true });
         done();
       },
       onCancel: done,
@@ -577,14 +615,14 @@ PH.bookmarks = (() => {
       submitLabel: "Save search",
       onSubmit: async (title) => {
         const cheapest = snapshotCheapest();
-        await PH.store.saveTrade(folder.id, {
+        const saved = await PH.store.saveTrade(folder.id, {
           title,
           completedAt: null,
           location: { version: page.version, type: page.type, slug: page.slug },
           priceHistory: cheapest ? [cheapest] : [],
         });
         setEditing(null);
-        toast(`Saved to ${folder.title}`);
+        toast(saved ? `Saved to ${folder.title}` : "That folder no longer exists.", { error: !saved });
       },
       onCancel: () => setEditing(null),
     });
@@ -602,7 +640,7 @@ PH.bookmarks = (() => {
       return;
     }
     const cheapest = snapshotCheapest();
-    await PH.store.saveTrade(folder.id, {
+    const saved = await PH.store.saveTrade(folder.id, {
       id: trade.id,
       location: { ...trade.location, version: page.version, type: page.type, slug: page.slug },
       /* The old history belonged to whatever search this used to point at —
@@ -610,7 +648,7 @@ PH.bookmarks = (() => {
          rather than appended to. */
       priceHistory: cheapest ? [cheapest] : [],
     });
-    toast(`“${trade.title}” now points at this search`);
+    toast(saved ? `“${trade.title}” now points at this search` : "That trade no longer exists.", { error: !saved });
     PH.panel.refresh();
   }
 
@@ -653,11 +691,40 @@ PH.bookmarks = (() => {
     return cheapest ? { ...cheapest, capturedAt: new Date().toISOString() } : null;
   }
 
-  /* poe.ninja gives chaosValue/divineValue directly (no rate math needed) —
-     homogenized to match priceBadge's own currency so the two badges are
-     directly comparable at a glance instead of forcing a mental conversion. */
-  function formatNinjaValue({ chaosValue, divineValue }, currency) {
-    return currency === "divine" ? `${divineValue.toFixed(1)} div` : `${Math.round(chaosValue)}c`;
+  /* poe.ninja gives chaosValue/divineValue directly (no rate math needed).
+     Picked by the item's OWN value, the same divine-once-it's-worth-1+
+     threshold formatChaosOrDivine uses — not by matching priceBadge's own
+     currency, which an earlier version did for at-a-glance comparability.
+     That fell apart for anything priced well outside its usual range (an
+     overpriced/joke listing, or a cheap listing of an otherwise-pricey
+     item): a real report showed a ~22-chaos item's own listing at 22
+     divine, and the avg badge dutifully converted poe.ninja's real 22.0
+     chaos value into "0.1 div" to match — technically consistent math,
+     but a number poe.ninja itself never shows for that item, since it
+     always presents this one in chaos. Matching poe.ninja's own natural
+     unit instead means this can never show a value that doesn't match
+     what clicking through to poe.ninja itself would show.
+
+     PoE2 is the one deliberate exception, per the developer's explicit
+     ask: below the divine threshold, PoE2 shows Exalted Orbs instead of
+     chaos, since Exalted (not Chaos) is PoE2's actual common bulk
+     currency — Chaos sits at an awkward middle tier there (worth dozens
+     of Exalted apiece, see fetchCurrencyRates in service-worker.js), so a
+     "3c" reading doesn't map to how PoE2 players actually think about
+     value the way it does in PoE1. Needs the live exchange rate (the
+     same one the ≈ badge and cheapest-price capture already use) to
+     convert chaosValue into Exalted terms; falls back to chaos if that
+     rate or "Exalted Orb" specifically hasn't loaded yet, rather than
+     showing nothing. Uses the same "ex" abbreviation PH.ui.formatPrice
+     gives a real Exalted-priced trade, via the shared
+     PH.ui.abbreviateCurrency, rather than a second hardcoded label. */
+  function formatNinjaValue({ chaosValue, divineValue }, version) {
+    if (divineValue >= 1) return `${divineValue.toFixed(1)} div`;
+    if (version === "2") {
+      const exaltedInChaos = PH.prices.currentRate()?.chaosValueByName?.["Exalted Orb"];
+      if (exaltedInChaos) return `${Math.round(chaosValue / exaltedInChaos)} ${PH.ui.abbreviateCurrency("Exalted Orb")}`;
+    }
+    return `${Math.round(chaosValue)}c`;
   }
 
   /* "8/26 4:26pm" — hand-rolled instead of toLocaleString() so the format is
@@ -679,24 +746,75 @@ PH.bookmarks = (() => {
      loaded — never guessed, and if the rate isn't loaded and the currencies
      differ, we just don't show a trend rather than compare apples to
      oranges. */
-  /* Also used by the sparkline (toChaosEquivalent) to put a trade's whole
-     price history on one comparable scale. currency is only ever exactly
-     "chaos" or "divine" for those two (see readCurrency in prices.js) —
-     any other currency (Orb of Fusing, Exalted Orb, ...) has no real rate
-     available (poe.ninja only feeds this extension a chaos<->divine
-     rate), so it's floored to a flat ~1 chaos-equivalent rather than left
-     uncomparable — an explicit, deliberate approximation for sorting/
-     trend/total-cost math on a small, user-curated set of trades, not a
-     real conversion. In practice a bookmarked trade's own price rarely
-     lands here in an exotic currency at all, since PH.prices.cheapestOnPage
-     (what actually seeds a trade's price) only ever compares chaos/divine
-     listings to begin with — this exists for whatever does reach here
-     with something else, rather than leaving it uncomparable by surprise. */
+  /* Also used by the sparkline to put a trade's whole price history on one
+     comparable scale. Delegates to PH.prices.chaosEquivalentOf, which now
+     resolves almost any currency's real value via poe.ninja's own catalog
+     (see fetchCurrencyRates in service-worker.js) — PoE2 listings commonly
+     get priced in things like Orb of Alchemy or Gemcutter's Prism, and
+     PH.prices.cheapestOnPage (what seeds a trade's price to begin with) can
+     now pick those up too instead of skipping them for lack of a rate.
+
+     chaosEquivalentOf returning null is ambiguous on its own — it means
+     either "no rate has loaded at all yet" (a brief, temporary state right
+     after the page loads, or right after a PoE1/PoE2 version switch) or
+     "the rate IS loaded but this specific currency genuinely isn't in
+     poe.ninja's catalog" (a real, permanent gap). Those need different
+     treatment: floor the permanent case to a flat ~1 chaos-equivalent
+     (better than leaving it uncomparable, for a small, user-curated set of
+     trades), but propagate null for the temporary case so totalCostFor
+     keeps treating the whole total as unknown rather than momentarily
+     summing a floored 1 in place of a trade's real (possibly much larger)
+     value — collapsing these two into one flat floor previously
+     reintroduced the exact Total Cost oscillation bug fixed earlier this
+     project (a folder's total flipping between its real value and a much
+     smaller wrong one on every render), caught live via the developer's
+     own hover-popup screenshot showing two history entries seconds apart
+     (8.0 div, then 222 ex — a ~15x undervaluation from exactly this
+     floor-during-a-temporarily-unloaded-rate scenario). */
   function toChaosEquivalent(entry) {
-    if (entry.currency === "chaos") return entry.amount;
-    const rate = PH.prices.currentRate();
-    if (entry.currency === "divine") return rate ? entry.amount * rate.divineInChaos : null;
-    return 1;
+    const real = PH.prices.chaosEquivalentOf(entry.amount, entry.currency);
+    if (real != null) return real;
+    return PH.prices.currentRate() ? 1 : null;
+  }
+
+  /* A trade's own latest captured price as a chaos-equivalent — the same
+     lookup tradeRow (for display) and totalCostFor (for the folder total)
+     already do, pulled out here since "Sort by price" is a third caller
+     with the same need. null for a trade with nothing captured yet, or a
+     divine price with no exchange rate loaded — sortFolderByPrice below
+     sorts those last, same null-sorts-last rule used for price sorting
+     everywhere else in this codebase. */
+  function tradeChaosPrice(trade) {
+    const latest = (trade.priceHistory ?? (trade.priceAtSave ? [trade.priceAtSave] : [])).at(-1);
+    return latest ? toChaosEquivalent(latest) : null;
+  }
+
+  /* "Sort by price" in a folder's own menu — reorders its trades descending
+     (priciest first) and persists that via reorderTrades, the same
+     storage call manual drag-reordering already uses, so the result is
+     indistinguishable from having dragged everything into place by hand.
+     Reads the trade list straight from storage rather than whatever
+     render already has in memory, since the folder this was clicked from
+     might be collapsed — folderRow only fetches a folder's trades when
+     it's open, but the menu (and this action) exists whether it is or
+     not. Trades with no computable price still sort last regardless of
+     direction — "unknown" isn't a price, so it's never worth more or less
+     than a real one, same null-sorts-last rule used for price sorting
+     everywhere else in this codebase. */
+  async function sortFolderByPrice(folder) {
+    const trades = await PH.store.getTrades(folder.id);
+    if (trades.length < 2) return;
+
+    const keyed = trades.map((trade, i) => ({ trade, i, key: tradeChaosPrice(trade) }));
+    keyed.sort((a, b) => {
+      if (a.key == null && b.key == null) return a.i - b.i;
+      if (a.key == null) return 1;
+      if (b.key == null) return -1;
+      return b.key - a.key || a.i - b.i;
+    });
+
+    await PH.store.reorderTrades(folder.id, keyed.map((k) => k.trade.id));
+    PH.panel.refresh();
   }
 
   function priceTrend(latest, previous) {
@@ -720,26 +838,30 @@ PH.bookmarks = (() => {
      move gets some fill. */
   const arrowTier = (percent) => (percent >= 30 ? "neon" : percent >= 10 ? "light" : "dull");
 
-  /* Used for Total Cost, which is always tracked in chaos (see
+  /* Used for Total Cost, which is always tracked in chaos-equivalent (see
      totalCostFor) but reads better in divine once it's worth 1+ — same
      "don't guess" rule as everywhere else: no rate loaded means it just
-     stays in chaos rather than showing a stale or fabricated conversion. */
-  function formatChaosOrDivine(amount) {
+     stays in the small-unit fallback rather than showing a stale or
+     fabricated conversion. version ("1"/"2", the folder's own — see
+     folderRow) picks Exalted over Chaos as that small unit for PoE2, via
+     PH.prices.smallUnitAmount — see the note there and in
+     poe2-exalt-replaces-chaos-in-hierarchy for why. */
+  function formatChaosOrDivine(amount, version) {
     const rate = PH.prices.currentRate();
     return rate && amount >= rate.divineInChaos
       ? `${(amount / rate.divineInChaos).toFixed(1)} div`
-      : `${Math.round(amount)}c`;
+      : PH.prices.smallUnitAmount(amount, version);
   }
 
   /* Same chaos/divine threshold as formatChaosOrDivine, but signed — used
      for the +/- delta shown next to each price-history line. */
-  function formatChaosDelta(diff) {
+  function formatChaosDelta(diff, version) {
     const abs = Math.abs(diff);
     const sign = diff > 0 ? "+" : "-";
     const rate = PH.prices.currentRate();
     return rate && abs >= rate.divineInChaos
       ? `${sign}${(abs / rate.divineInChaos).toFixed(1)} div`
-      : `${sign}${Math.round(abs)}c`;
+      : `${sign}${PH.prices.smallUnitAmount(abs, version)}`;
   }
 
   /* Shared by tradeRow (trade.priceHistory) and folderRow
@@ -750,8 +872,13 @@ PH.bookmarks = (() => {
      displayed, since trades show their own native currency and Total Cost
      converts to divine past a threshold — formatLatest is just the badge
      (Total Cost's gets a "Total Cost: " prefix the popup rows don't need),
-     formatAmount is the bare price used in each popup row. */
-  function priceTrendUI(history, { badgeClass, formatLatest, formatAmount, historyTitle, trendTitle }) {
+     formatAmount is the bare price used in each popup row. version is only
+     used for the diff column's own formatChaosDelta call (Total Cost's
+     diff is always a chaos-equivalent number needing the same PoE2-uses-
+     Exalted substitution regardless of which caller this is); tradeRow's
+     own formatAmount/formatLatest already close over whatever they need
+     independently, so this doesn't affect those. */
+  function priceTrendUI(history, { badgeClass, formatLatest, formatAmount, historyTitle, trendTitle, version }) {
     const latest = history.at(-1) ?? null;
     const previous = history.length >= 2 ? history.at(-2) : null;
     const trend = latest && previous ? priceTrend(latest, previous) : null;
@@ -782,7 +909,7 @@ PH.bookmarks = (() => {
           el("span", { class: "ph-hover-time", text: formatHistoryTimestamp(entry.capturedAt) }),
           el("span", { class: "ph-hover-price", text: formatAmount(entry) }),
           diff
-            ? el("span", { class: `ph-hover-diff ph-hover-diff-${diff > 0 ? "up" : "down"}`, text: formatChaosDelta(diff) })
+            ? el("span", { class: `ph-hover-diff ph-hover-diff-${diff > 0 ? "up" : "down"}`, text: formatChaosDelta(diff, version) })
             : el("span"),
         ];
       }).reverse().flat();

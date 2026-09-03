@@ -22,6 +22,18 @@ PH.location = (() => {
     return firstSegment === "trade2" ? "2" : "1";
   }
 
+  /* A malformed percent-encoding in the URL would otherwise throw straight
+     out of parsePath — falling back to the raw text keeps this a league
+     name that just looks odd instead of an uncaught rejection that skips
+     the rest of checkLocation's navigation handling in main.js. */
+  function decodeSegment(segment) {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  }
+
   /* Pull a location out of any pathname. Returns nulls for the parts that
      aren't there, so callers can check what they got. */
   function parsePath(pathname) {
@@ -39,7 +51,7 @@ PH.location = (() => {
     return {
       version: parseVersion(versionPart),
       type: type || null,
-      league: league ? decodeURIComponent(league) : null,
+      league: league ? decodeSegment(league) : null,
       slug: slug || null,
       isLive: live === "live",
     };
@@ -95,5 +107,5 @@ PH.location = (() => {
     return lastSeenLeagues?.[location.version] ?? null;
   }
 
-  return { current, parsePath, parseUrl, buildUrl, resolveLeague, encodeSegment };
+  return { current, parsePath, parseUrl, buildUrl, resolveLeague };
 })();

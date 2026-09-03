@@ -13,9 +13,9 @@ in-page panel.
 - **Bookmarks** — folders with icons, drag to reorder, archive, mark searches
   done, share a folder as a code, back everything up to a file. Each saved
   search tracks its cheapest price over your last 5 visits, with a ▲/▼ for
-  whether it's trending up or down — and for PoE1 items poe.ninja has a
-  fixed catalog for (uniques, gems, corpses, ...), its average price
-  alongside it.
+  whether it's trending up or down — and for items poe.ninja has a fixed
+  catalog for (uniques on both games; PoE1 also gems, corpses, ...), its
+  average price alongside it, with a 7-day trend line graph on hover.
 - **Saved listings** — snapshot a specific trade offer (item, price, seller,
   its mods) with a button on each result row. "Search this exact item" takes
   you straight back to real results for that item and its rolled mods
@@ -83,8 +83,8 @@ PoE Overlay use. It's rate-limited against the trade site's own response
 headers and only ever runs when you click it. Nothing else in the extension
 automates any in-game action or sends your data anywhere; everything else
 reads the page you already have open and stores your data locally. The other
-network request it makes is a currency exchange rate from poe.ninja, cached
-for 15 minutes.
+requests it makes are a currency exchange rate and item-price data from
+poe.ninja, both cached for 15 minutes.
 
 Exchange rate data from [poe.ninja](https://poe.ninja). Import/export format,
 several verified CSS selectors, and the folder icon artwork come from
