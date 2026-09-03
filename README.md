@@ -27,13 +27,6 @@ in-page panel.
 
 Works on `pathofexile.com/trade` (PoE 1) and `/trade2` (PoE 2).
 
-## Bookmarks survive a league reset
-
-A saved search stores the search hash, not the league. When you click it, the
-league is filled in from wherever you're browsing — so last league's bookmarks
-open in this league without any editing. You can pin a bookmark to one specific
-league if you want (rename it and tick the box).
-
 ## Install
 
 Works in any Chromium browser — Opera GX, Chrome, Edge, Brave — and in Firefox.
