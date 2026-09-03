@@ -1782,16 +1782,25 @@ PH.saved = (() => {
          shown directly here now, not just a generic pointer to go find
          it elsewhere. Still same-origin at this point (about:blank, never
          navigated anywhere yet), so writing a real message straight into
-         it is safe — same as the dark-background write above. */
+         it is safe — same as the dark-background write above.
+
+         result?.error is always one of searchTrade's own hardcoded
+         strings today (never raw server text), but it's still assigned via
+         a real element's textContent rather than interpolated into the
+         write() markup — textContent can't be misread as HTML no matter
+         what ends up in that string later, which a template literal
+         can't promise on its own. Firefox's AMO linter flags exactly this
+         pattern (an unsanitized dynamic value passed to document.write)
+         even though nothing user-controlled reaches it today. */
       if (resultTab) {
-        resultTab.document.write(`
-          <meta charset="utf-8">
-          <body style="background:#1c1f26;margin:0;color:#c9ccd3;font:14px sans-serif;padding:32px;line-height:1.6">
-            <p>Search this exact item didn't go through.</p>
-            <p>${result?.error ?? "Check the original tab for why (rate limited, a network error, ...) and try again from there."}</p>
-          </body>
-        `);
-        resultTab.document.close();
+        const doc = resultTab.document;
+        doc.write(
+          '<meta charset="utf-8"><body style="background:#1c1f26;margin:0;color:#c9ccd3;font:14px sans-serif;padding:32px;line-height:1.6"><p>Search this exact item didn\'t go through.</p></body>'
+        );
+        const message = doc.createElement("p");
+        message.textContent = result?.error ?? "Check the original tab for why (rate limited, a network error, ...) and try again from there.";
+        doc.body.appendChild(message);
+        doc.close();
       }
       return;
     }

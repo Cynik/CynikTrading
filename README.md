@@ -49,16 +49,26 @@ reload the trade page.
 
 **Firefox**
 
+1. Download the `.xpi` file from the [latest release](https://github.com/Cynik/CynikTrading/releases/latest)
+2. Drag it into a Firefox window (or `about:addons` → gear icon →
+   **Install Add-on From File…** and pick it)
+3. Click **Add** on the permission prompt, then open the trade site. The panel
+   appears the same way it does on Chromium.
+
+It installs permanently, like any other extension — no repeating this on
+restart.
+
+**Running from source instead?** Firefox only allows an unpacked, unsigned
+extension to load temporarily, one session at a time:
+
 1. Open `about:debugging#/runtime/this-firefox`
 2. Click **Load Temporary Add-on…** and pick `manifest.json` inside this
    folder
 3. Open the trade site. The panel appears the same way it does on Chromium.
 
-A temporary add-on unloads when Firefox closes, so this step needs repeating
-each session — that's Firefox's own limitation for unpacked/unsigned
-extensions, not something this project can skip around. After editing files,
-click **Reload** next to the add-on on the same `about:debugging` page, then
-reload the trade page.
+This unloads when Firefox closes, so steps 1-2 need repeating next time you
+open it. After editing files, click **Reload** next to the add-on on the
+same `about:debugging` page, then reload the trade page.
 
 ---
 
