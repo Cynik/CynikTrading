@@ -1,6 +1,6 @@
 # PoE Trade Helper
 
-This project is based in part on Better Trading by Exile Center, which is licensed under the MIT License.
+This project is based in part on Better Trading by Exile Center, which is licensed under the MIT License. Seven newer ascendancy-class portraits (Reliquarian, Luminary, Warden, Disciple of Varashta, Spirit Walker, Martial Artist, Abyssal Lich) come from [poewiki.net](https://www.poewiki.net), used under [CC BY-NC-SA](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
 Quality-of-life additions to the official Path of Exile trade site, as an
 in-page panel.

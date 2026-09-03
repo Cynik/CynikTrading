@@ -15,25 +15,40 @@
 window.PH = window.PH || {};
 
 PH.icons = (() => {
-  /* Grouped the way the picker displays them: one row per base class. */
+  /* Grouped the way the picker displays them: one row per base class.
+
+     "raider" is deliberately NOT listed here even though raider.png still
+     ships (see the bottom of this file) — GGG removed the Raider
+     ascendancy and replaced it with Warden in patch 3.25, so a folder set
+     to "raider" before that still needs to render (existing saved data),
+     but nobody picking an icon today should be offered a retired
+     ascendancy. Scion gained two more ascendancies since this project's
+     icon set was first built (Reliquarian in 3.28, Luminary in 3.29) —
+     added here now that real art for both exists. */
   const POE1_CLASSES = [
     ["Duelist",  "#b8482f", ["slayer", "gladiator", "champion"]],
     ["Shadow",   "#2f7f6a", ["assassin", "saboteur", "trickster"]],
     ["Marauder", "#a5462b", ["juggernaut", "berserker", "chieftain"]],
     ["Witch",    "#5a4b9c", ["necromancer", "elementalist", "occultist"]],
-    ["Ranger",   "#3f8a3f", ["deadeye", "raider", "pathfinder"]],
+    ["Ranger",   "#3f8a3f", ["deadeye", "warden", "pathfinder"]],
     ["Templar",  "#9c8033", ["guardian", "hierophant", "inquisitor"]],
-    ["Scion",    "#8a5f9c", ["ascendant"]],
+    ["Scion",    "#8a5f9c", ["ascendant", "reliquarian", "luminary"]],
   ];
 
+  /* Sorceress/Huntress/Monk were each shipped with only two of their three
+     ascendancies at first (the third hadn't been released, or had no art
+     bundled yet) — Disciple of Varashta, Spirit Walker, and Martial Artist
+     fill those in now that real art exists for each. A new Druid base
+     class (Oracle, Shaman) has also since been announced but isn't added
+     here — no art for it yet, unlike these three. */
   const POE2_CLASSES = [
     ["Warrior",   "#a5462b", ["poe2-titan", "poe2-warbringer", "poe2-smith-of-kitava"]],
-    ["Sorceress", "#3f6ea8", ["poe2-chronomancer", "poe2-stormweaver"]],
+    ["Sorceress", "#3f6ea8", ["poe2-chronomancer", "poe2-stormweaver", "poe2-disciple-of-varashta"]],
     ["Ranger",    "#3f8a3f", ["poe2-deadeye", "poe2-pathfinder"]],
-    ["Huntress",  "#4f8a6a", ["poe2-ritualist", "poe2-amazon"]],
-    ["Monk",      "#2f7f8a", ["poe2-invoker", "poe2-acolyte-of-chayula"]],
+    ["Huntress",  "#4f8a6a", ["poe2-ritualist", "poe2-amazon", "poe2-spirit-walker"]],
+    ["Monk",      "#2f7f8a", ["poe2-invoker", "poe2-acolyte-of-chayula", "poe2-martial-artist"]],
     ["Mercenary", "#8a6a33", ["poe2-witch-hunter", "poe2-gemling-legionnaire", "poe2-tactician"]],
-    ["Witch",     "#5a4b9c", ["poe2-infernalist", "poe2-blood-mage", "poe2-lich"]],
+    ["Witch",     "#5a4b9c", ["poe2-infernalist", "poe2-blood-mage", "poe2-lich", "poe2-abyssal-lich"]],
   ];
 
   const POE1_ITEMS = ["alchemy", "chaos", "exalt", "divine", "mirror", "card", "essence", "fossil", "map", "scarab"];
