@@ -224,13 +224,27 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
-  color: var(--ph-muted);
+  /* Brighter than --ph-muted (#a3a09a) — that read as faint enough that an
+     inactive tab was easy to miss entirely, per a real report. Still
+     dimmer than --ph-ink so the active tab stays the clear focal point. */
+  color: #c7c3ba;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .ph-tab:hover { color: var(--ph-ink); background: rgba(255, 255, 255, 0.03); }
-.ph-tab-active { color: var(--ph-gold); border-bottom-color: var(--ph-gold); }
+/* A soft gold fill behind the active tab, on top of the existing
+   underline+color — the underline alone (a 2px line) was easy to miss at a
+   glance; the fill makes "this one's selected" readable without having to
+   notice it. Deepens slightly on hover, echoing .ph-tab:hover's own
+   background above rather than introducing a new interaction language. */
+.ph-tab-active {
+  color: var(--ph-gold);
+  border-bottom-color: var(--ph-gold);
+  background: rgba(212, 175, 90, 0.12);
+  font-weight: 600;
+}
+.ph-tab-active:hover { background: rgba(212, 175, 90, 0.18); }
 .ph-tab-glyph { font-size: 12px; opacity: 0.85; }
 
 .ph-body {

@@ -12,11 +12,10 @@ window.PH = window.PH || {};
 
 PH.panel = (() => {
   const COLLAPSE_KEY = "ph-panel-collapsed";
-  const TAB_KEY = "ph-panel-tab";
 
   const TABS = [
     { id: "bookmarks", label: "Bookmarks", glyph: "🗀" },
-    { id: "saved", label: "Saved", glyph: "🏷" },
+    { id: "saved", label: "Saved", glyph: "💾" },
   ];
 
   let root = null;
@@ -72,7 +71,6 @@ PH.panel = (() => {
   function selectTab(id) {
     if (!renderers[id]) return;
     currentTab = id;
-    localStorage.setItem(TAB_KEY, id);
 
     for (const btn of root.querySelectorAll(".ph-tab")) {
       btn.classList.toggle("ph-tab-active", btn.dataset.tab === id);
@@ -157,8 +155,13 @@ PH.panel = (() => {
     document.body.classList.add("ph-active");
     setCollapsed(isCollapsed());
 
-    const saved = localStorage.getItem(TAB_KEY);
-    currentTab = renderers[saved] ? saved : "bookmarks";
+    /* Deliberately NOT restoring whichever tab was last open (this used to
+       persist it to localStorage) — per an explicit ask, every fresh page
+       load should land on Bookmarks regardless of what you were looking at
+       last, not just on the very first visit. currentTab already defaults
+       to "bookmarks" at module scope, so there's nothing to set here;
+       switching tabs mid-session (selectTab) still works exactly the same,
+       it just no longer outlives the page. */
   }
 
   /* Called by ratelimit-overlay.js on every render pass (both right after a
