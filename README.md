@@ -67,44 +67,6 @@ extensions, not something this project can skip around. After editing files,
 click **Reload** next to the add-on on the same `about:debugging` page, then
 reload the trade page.
 
-## Moving over from Better Trading
-
-Import is compatible with Better Trading's formats, so nothing has to be
-retyped:
-
-- **One folder** — its menu → Export/Share, copy the code, then here:
-  **Import folder** and paste it.
-- **Everything** — Better Trading's _Save file_, then here: **Restore from
-  file**. Restoring adds folders and never deletes, so it's safe to try.
-
-## Tests
-
-```
-node test/logic-test.js
-```
-
-Covers storage, trade-URL parsing, league resolution, and Better Trading
-import/export compatibility. Panel rendering and the page selectors still need
-a browser.
-
-## Design
-
-The extension is deliberately read-only with respect to GGG, with one narrow,
-deliberate exception: **Search this exact item** (Saved listings) calls the
-trade site's own search API directly, so it can take you to real results
-instead of a filled-in form you still have to submit yourself — the same
-approach well-established community tools like Awakened PoE Trade and
-PoE Overlay use. It's rate-limited against the trade site's own response
-headers and only ever runs when you click it. Nothing else in the extension
-automates any in-game action or sends your data anywhere; everything else
-reads the page you already have open and stores your data locally. The other
-requests it makes are a currency exchange rate and item-price data from
-poe.ninja, both cached for 15 minutes.
-
-Exchange rate data from [poe.ninja](https://poe.ninja). Import/export format,
-several verified CSS selectors, and the folder icon artwork come from
-[Better Trading](https://github.com/exile-center/better-trading) (MIT).
-
 ---
 
 This product isn't affiliated with or endorsed by Grinding Gear Games in any way.
