@@ -34,7 +34,7 @@ league is filled in from wherever you're browsing — so last league's bookmarks
 open in this league without any editing. You can pin a bookmark to one specific
 league if you want (rename it and tick the box).
 
-## Install (development)
+## Install
 
 Works in any Chromium browser — Opera GX, Chrome, Edge, Brave — and in Firefox.
 
