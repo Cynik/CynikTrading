@@ -18,7 +18,8 @@ in-page panel.
   saved it — hover the price to see its history.
 - **Auto-`~`** — stat filter boxes start with `~` already typed, making the mod
   search fuzzy by default. Delete it for an exact search.
-- **Chaos ↔ divine** — the other currency's value, next to each listed price.
+- **Currency conversion** — the other currency's value, next to each listed
+  price: chaos ↔ divine on PoE1, exalt ↔ divine on PoE2.
 
 Extension only runs on the official Path of Exile 1 and 2 trade websites.
 
