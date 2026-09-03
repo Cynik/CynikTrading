@@ -412,7 +412,16 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
      past what a single unbroken line can hold on screen. max-width + normal
      wrapping (nowrap's default off-state) keeps a short line exactly as
      compact as before while letting a longer one wrap instead of running
-     off the edge of the viewport. */
+     off the edge of the viewport. width: max-content is load-bearing here,
+     not decoration — a position:fixed box with width left auto and no
+     `right` sizes itself via shrink-to-fit, which real testing showed
+     collapsing toward min-content once wrapping was allowed (every word,
+     even "5s", landing on its own line — the rate-limit pill's own popup
+     visibly broken). Forcing max-content sizing (still clamped by
+     max-width above it) is what actually keeps a short line compact and a
+     long one filling up to the cap instead of collapsing to its narrowest
+     unbreakable fragment. */
+  width: max-content;
   max-width: 260px;
   pointer-events: none;
 }
@@ -453,6 +462,15 @@ body.ph-active:not(.ph-collapsed) .content > .bottom { position: static; }
   padding-bottom: 5px;
   margin-bottom: 5px;
   border-bottom: 1px solid var(--ph-line);
+}
+
+/* Separates one policy's lines from the next in the rate-limit pill's
+   popup (see ratelimit-overlay.js's render()) — a raw <hr> Node passed
+   straight through hoverPopup's lines array. */
+.ph-hover-popup-divider {
+  border: 0;
+  border-top: 1px solid var(--ph-line);
+  margin: 5px -4px;
 }
 
 /* The trend sparkline sits above the list, full width of the popup's own

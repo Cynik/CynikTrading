@@ -758,7 +758,7 @@ PH.saved = (() => {
     const sign = diff > 0 ? "+" : "-";
     const rate = PH.prices.currentRate();
     return rate && abs >= rate.divineInChaos
-      ? `${sign}${(abs / rate.divineInChaos).toFixed(1)} div`
+      ? `${sign}${PH.prices.formatDivine(abs / rate.divineInChaos)}`
       : `${sign}${PH.prices.smallUnitAmount(abs, version)}`;
   }
 
@@ -2399,7 +2399,10 @@ PH.saved = (() => {
         onclick: () => { setGroupCollapsed(entry.id, isOpen); PH.panel.refresh(); },
       },
         el("span", { class: "ph-saved-group-chevron", text: isOpen ? "▾" : "▸" }),
-        el("span", { class: "ph-saved-group-title", text: entry.title })
+        /* title: entry.title — .ph-saved-group-title's own CSS
+           ellipsis-truncates a long one, so this is the only way to read
+           the rest without renaming the group. */
+        el("span", { class: "ph-saved-group-title", text: entry.title, title: entry.title })
       );
 
       const compareBtn = button(
@@ -3646,9 +3649,13 @@ PH.saved = (() => {
         checked: selected.has(listing.id),
         onchange: (e) => toggleSelected(listing.id, e.target.checked),
       }),
+      /* title falls back the same way text does — .ph-saved-title's own CSS
+         ellipsis-truncates a long one, so this is the only way to read the
+         rest without opening the compare view. */
       el("span", {
         class: `ph-saved-title ${listing.rarity ? `ph-rarity-${listing.rarity}` : ""}`.trim(),
         text: listing.title || "Untitled item",
+        title: listing.title || "Untitled item",
       }),
       priceBadge
     ));

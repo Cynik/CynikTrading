@@ -158,7 +158,10 @@ PH.bookmarks = (() => {
     });
     toggle.append(
       PH.icons.render(folder.icon),
-      el("span", { class: "ph-folder-title", text: folder.title })
+      /* title: folder.title — same reasoning as .ph-trade-title above:
+         .ph-folder-title's own CSS ellipsis-truncates a long one, so this
+         is the only way to read the rest without renaming it. */
+      el("span", { class: "ph-folder-title", text: folder.title, title: folder.title })
     );
 
     /* folder.totalCostHistory is a cached, capped history (same shape and
@@ -471,7 +474,13 @@ PH.bookmarks = (() => {
          a real rate-limit reading back from whatever request(s) that
          navigation triggers on GGG's side. */
       ? el("a", { class: "ph-trade-link", href: url, onclick: () => PH.store.recordTradeLinkClick() },
-          el("span", { class: "ph-trade-title", text: trade.title }),
+          /* title: trade.title — .ph-trade-title's own CSS truncates a long
+             one with an ellipsis (panel.css), so this is the only way to
+             read the rest of it without opening the trade itself. Routes
+             through PH.ui.hoverPopup like every other tooltip now (see the
+             note above ui.js's own el()), not a native title, so it stays
+             consistent with the rest of the UI. */
+          el("span", { class: "ph-trade-title", text: trade.title, title: trade.title }),
           priceGroup,
           avgBadge,
           trade.location.league ? el("span", { class: "ph-pin-badge", text: PH.location.displayLeague(trade.location.league), title: "Pinned to this league" }) : null
@@ -479,7 +488,13 @@ PH.bookmarks = (() => {
       /* No league known yet — usually because you opened /trade with no
          league in the URL. Say so rather than rendering a dead link. */
       : el("span", { class: "ph-trade-link ph-trade-dead", title: "Open any league's trade page and this will light up" },
-          el("span", { class: "ph-trade-title", text: trade.title }),
+          /* title: trade.title — .ph-trade-title's own CSS truncates a long
+             one with an ellipsis (panel.css), so this is the only way to
+             read the rest of it without opening the trade itself. Routes
+             through PH.ui.hoverPopup like every other tooltip now (see the
+             note above ui.js's own el()), not a native title, so it stays
+             consistent with the rest of the UI. */
+          el("span", { class: "ph-trade-title", text: trade.title, title: trade.title }),
           priceGroup,
           avgBadge,
           el("span", { class: "ph-pin-badge", text: "no league" })
@@ -742,7 +757,7 @@ PH.bookmarks = (() => {
      gives a real Exalted-priced trade, via the shared
      PH.ui.abbreviateCurrency, rather than a second hardcoded label. */
   function formatNinjaValue({ chaosValue, divineValue }, version) {
-    if (divineValue >= 1) return `${divineValue.toFixed(1)} div`;
+    if (divineValue >= 1) return PH.prices.formatDivine(divineValue);
     if (version === "2") {
       const exaltedInChaos = PH.prices.currentRate()?.chaosValueByName?.["Exalted Orb"];
       if (exaltedInChaos) return `${Math.round(chaosValue / exaltedInChaos)} ${PH.ui.abbreviateCurrency("Exalted Orb")}`;
@@ -872,7 +887,7 @@ PH.bookmarks = (() => {
   function formatChaosOrDivine(amount, version) {
     const rate = PH.prices.currentRate();
     return rate && amount >= rate.divineInChaos
-      ? `${(amount / rate.divineInChaos).toFixed(1)} div`
+      ? PH.prices.formatDivine(amount / rate.divineInChaos)
       : PH.prices.smallUnitAmount(amount, version);
   }
 
@@ -883,7 +898,7 @@ PH.bookmarks = (() => {
     const sign = diff > 0 ? "+" : "-";
     const rate = PH.prices.currentRate();
     return rate && abs >= rate.divineInChaos
-      ? `${sign}${(abs / rate.divineInChaos).toFixed(1)} div`
+      ? `${sign}${PH.prices.formatDivine(abs / rate.divineInChaos)}`
       : `${sign}${PH.prices.smallUnitAmount(abs, version)}`;
   }
 

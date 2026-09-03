@@ -201,6 +201,22 @@ PH.prices = (() => {
     return `${Math.round(chaosEquivalent)}c`;
   }
 
+  /* A divine amount, shown at whatever precision it actually needs — 1
+     decimal by default, 2 only when the value genuinely has one (never 0,
+     never a bare integer with no decimal at all, so this still lines up
+     with the existing "16.0 div" look everywhere it doesn't need the extra
+     digit). A real report caught the gap this closes: Total Cost history
+     rows showed the same "16.0 div" for two entries that actually differed
+     by a real ~12 chaos (well under a tenth of a divine at typical
+     exchange rates), silently hiding a genuine price change from a table
+     whose whole purpose is showing exactly that. */
+  function formatDivine(divineValue) {
+    const oneDecimal = Math.round(divineValue * 10) / 10;
+    const twoDecimal = Math.round(divineValue * 100) / 100;
+    const text = Math.abs(twoDecimal - oneDecimal) < 0.005 ? oneDecimal.toFixed(1) : twoDecimal.toFixed(2);
+    return `${text} div`;
+  }
+
   function annotate() {
     if (!enabled || !rate) return;
     const version = PH.location.current().version;
@@ -486,5 +502,8 @@ PH.prices = (() => {
        the same PoE2-uses-Exalted-not-Chaos substitution this file's own
        annotate() uses, rather than three drifting copies of it. */
     smallUnitAmount,
+    /* Same sharing reasoning as smallUnitAmount above, for the divine side
+       of those same three call sites (plus formatNinjaValue). */
+    formatDivine,
   };
 })();

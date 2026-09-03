@@ -1,6 +1,6 @@
 /* =========================================================================
-   ratelimit-overlay.js — feeds the panel header's "Rate" pill with GGG's
-   own trade-API rate-limit budget.
+   ratelimit-overlay.js — feeds the panel header's "Rate Limit Info" pill
+   with GGG's own trade-API rate-limit budget.
    =========================================================================
    Awakened PoE Trade shows this the same way: a small always-visible
    indicator with every window's real numbers ("1 / 5 over 12s"), not a
@@ -83,11 +83,17 @@ PH.rateLimitOverlay = (() => {
     return { lines, hot };
   }
 
+  /* Fixed order (not Object.values(state), whose key order depends on
+     whichever endpoint gets its first real response first) so the popup
+     always shows search above fetch, matching the divider inserted below. */
   function render() {
     const lines = [];
     let hot = false;
 
-    for (const data of Object.values(state)) {
+    for (const endpoint of ["search", "fetch"]) {
+      const data = state[endpoint];
+      if (!data) continue;
+      if (lines.length) lines.push(PH.ui.el("hr", { class: "ph-hover-popup-divider" }));
       const result = linesFor(data);
       lines.push(...result.lines);
       hot = hot || result.hot;

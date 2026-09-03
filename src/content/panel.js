@@ -125,7 +125,7 @@ PH.panel = (() => {
        are read lazily via the `rateLines` closure, since this pill is built
        once here and never recreated, but its content keeps changing for as
        long as the panel stays open. */
-    ratePill = el("span", { class: "ph-ratelimit-pill", text: "Rate" });
+    ratePill = el("span", { class: "ph-ratelimit-pill", text: "Rate Limit Info" });
     PH.ui.hoverPopup(ratePill, () => rateLines, { title: "Trade-API rate limit" });
 
     const header = el("div", { class: "ph-header" }, collapse, title, ratePill);
